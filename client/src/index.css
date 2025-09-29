@@ -1,0 +1,112 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Open+Sans:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: hsl(210, 40%, 98%);
+  --foreground: hsl(210, 40%, 15%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(210, 40%, 15%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(210, 40%, 15%);
+  --primary: hsl(207, 90%, 40%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(207, 90%, 54%);
+  --secondary-foreground: hsl(0, 0%, 100%);
+  --muted: hsl(210, 40%, 96%);
+  --muted-foreground: hsl(215, 16%, 47%);
+  --accent: hsl(210, 40%, 96%);
+  --accent-foreground: hsl(210, 40%, 15%);
+  --destructive: hsl(14, 90%, 55%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(214, 32%, 91%);
+  --input: hsl(214, 32%, 91%);
+  --ring: hsl(207, 90%, 40%);
+  --success: hsl(122, 39%, 49%);
+  --alert: hsl(14, 90%, 55%);
+  --font-sans: 'Roboto', sans-serif;
+  --font-body: 'Open Sans', sans-serif;
+  --font-mono: ui-monospace, monospace;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: hsl(222, 84%, 5%);
+  --foreground: hsl(210, 40%, 98%);
+  --card: hsl(222, 84%, 8%);
+  --card-foreground: hsl(210, 40%, 98%);
+  --popover: hsl(222, 84%, 8%);
+  --popover-foreground: hsl(210, 40%, 98%);
+  --primary: hsl(207, 90%, 45%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(217, 32%, 17%);
+  --secondary-foreground: hsl(210, 40%, 98%);
+  --muted: hsl(217, 32%, 17%);
+  --muted-foreground: hsl(215, 20%, 65%);
+  --accent: hsl(217, 32%, 17%);
+  --accent-foreground: hsl(210, 40%, 98%);
+  --destructive: hsl(14, 90%, 55%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(217, 32%, 17%);
+  --input: hsl(217, 32%, 17%);
+  --ring: hsl(207, 90%, 45%);
+  --success: hsl(122, 39%, 49%);
+  --alert: hsl(14, 90%, 55%);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-body);
+  }
+
+  .font-sans {
+    font-family: var(--font-sans);
+  }
+
+  .font-body {
+    font-family: var(--font-body);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  .video-feed {
+    background: linear-gradient(45deg, hsl(237, 44%, 15%), hsl(217, 38%, 20%));
+    position: relative;
+    overflow: hidden;
+  }
+
+  .status-indicator {
+    animation: pulse 2s infinite;
+  }
+
+  .recording-dot {
+    animation: recording-pulse 1.5s infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes recording-pulse {
+  0%, 100% { 
+    transform: scale(1); 
+    opacity: 1; 
+  }
+  50% { 
+    transform: scale(1.1); 
+    opacity: 0.7; 
+  }
+}
