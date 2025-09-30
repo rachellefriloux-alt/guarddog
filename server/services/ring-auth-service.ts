@@ -58,9 +58,29 @@ export class RingAuthService {
     }
   }
 
-  async authenticate(email: string, password: string, twoFactorAuthCode?: string): Promise<{ success: boolean; error?: string; requiresTwoFactor?: boolean }> {
+  async authenticate(email: string, password: string, twoFactorAuthCode?: string): Promise<{ success: boolean; error?: string; requiresTwoFactor?: boolean; requiresRefreshToken?: boolean }> {
     try {
       this.credentials = { email, password, twoFactorAuthCode };
+
+      // Try to use existing refresh token first if available
+      if (this.credentials.refreshToken) {
+        console.log('Attempting Ring authentication with existing refresh token...');
+        try {
+          this.ringApi = new RingApi({
+            refreshToken: this.credentials.refreshToken,
+            debug: process.env.NODE_ENV === 'development'
+          });
+
+          // Test the connection
+          await this.ringApi.getProfile();
+          this.isAuthenticated = true;
+          console.log('Ring authentication successful with refresh token');
+          return { success: true };
+        } catch (tokenError) {
+          console.log('Refresh token invalid, trying password authentication...');
+          this.credentials.refreshToken = undefined;
+        }
+      }
 
       const ringApiOptions: any = {
         email,
@@ -68,10 +88,13 @@ export class RingAuthService {
         debug: process.env.NODE_ENV === 'development'
       };
 
-      if (twoFactorAuthCode) {
-        ringApiOptions.twoFactorAuthCode = twoFactorAuthCode;
+      // Always include 2FA code if provided, even if empty
+      if (twoFactorAuthCode && twoFactorAuthCode.trim() !== '') {
+        ringApiOptions.twoFactorAuthCode = twoFactorAuthCode.trim();
+        console.log('Using 2FA code for Ring authentication');
       }
 
+      console.log('Attempting Ring authentication with password...');
       this.ringApi = new RingApi(ringApiOptions);
 
       // Test authentication by getting profile
@@ -94,14 +117,56 @@ export class RingAuthService {
       if (error.message?.includes('two factor') || error.message?.includes('2fa')) {
         return { 
           success: false, 
-          requiresTwoFactor: true,
-          error: 'Two-factor authentication required. Please provide the code from your authenticator app.'
+          requiresRefreshToken: true,
+          error: 'Ring now requires refresh tokens for authentication. Password authentication with 2FA is no longer supported. Please use the Ring mobile app to generate a refresh token.'
+        };
+      }
+
+      // Check if it's an access denied error (also indicates need for refresh token)
+      if (error.message?.includes('access_denied') || error.message?.includes('Failed to fetch oauth token')) {
+        return { 
+          success: false, 
+          requiresRefreshToken: true,
+          error: 'Ring authentication failed. Ring now requires refresh tokens instead of password authentication. Please generate a refresh token using the Ring mobile app.'
         };
       }
 
       return { 
         success: false, 
         error: error.message || 'Authentication failed. Please check your credentials.'
+      };
+    }
+  }
+
+  async authenticateWithRefreshToken(refreshToken: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log('Attempting Ring authentication with refresh token...');
+      
+      this.ringApi = new RingApi({
+        refreshToken,
+        debug: process.env.NODE_ENV === 'development'
+      });
+
+      // Test the connection
+      const profile = await this.ringApi.getProfile();
+      
+      // Save the refresh token
+      this.credentials = { 
+        email: profile.profile.email, 
+        password: '', // Not needed with refresh token
+        refreshToken 
+      };
+      
+      await this.saveCredentials();
+      this.isAuthenticated = true;
+      
+      console.log(`Ring authentication successful with refresh token for user: ${profile.profile.email}`);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Ring refresh token authentication error:', error);
+      return { 
+        success: false, 
+        error: 'Invalid refresh token. Please generate a new one using the Ring mobile app.'
       };
     }
   }

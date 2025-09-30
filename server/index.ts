@@ -39,14 +39,26 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Initialize AI services
-  console.log('🤖 Initializing AI Recognition Service...');
-  await recognitionService.initialize();
-  
-  console.log('📊 Setting up Daily Summary Service...');
-  await dailySummaryService.scheduleDailySummary();
+  try {
+    // Add global error handlers
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      // Don't exit the process, just log the error
+    });
 
-  const server = await registerRoutes(app);
+    process.on('uncaughtException', (error) => {
+      console.error('Uncaught Exception:', error);
+      // Don't exit the process, just log the error
+    });
+
+    // Initialize AI services
+    console.log('🤖 Initializing AI Recognition Service...');
+    await recognitionService.initialize();
+    
+    console.log('📊 Setting up Daily Summary Service...');
+    await dailySummaryService.scheduleDailySummary();
+
+    const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -70,14 +82,18 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "localhost",
-  }, () => {
-    log(`🛡️  GuardDog Surveillance System serving on port ${port}`);
-    log('🎥 Real camera streaming enabled');
-    log('🤖 AI recognition and learning active');
-    log('☁️  Google Drive integration ready');
-    log('📊 Daily summary generation scheduled');
-  });
+    server.listen({
+      port,
+      host: "localhost",
+    }, () => {
+      log(`🛡️  GuardDog Surveillance System serving on port ${port}`);
+      log('🎥 Real camera streaming enabled');
+      log('🤖 AI recognition and learning active');
+      log('☁️  Google Drive integration ready');
+      log('📊 Daily summary generation scheduled');
+    });
+  } catch (error) {
+    console.error('Failed to start GuardDog server:', error);
+    // Don't exit, just log the error
+  }
 })();
