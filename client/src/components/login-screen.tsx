@@ -1,9 +1,27 @@
 import { Cloud, ShieldCheck, Video } from 'lucide-react';
 import { GoogleSignInButton } from '@/components/google-sign-in-button';
 import { useAuth } from '@/hooks/use-auth';
+import { Button } from '@/components/ui/button';
+import { apiRequest } from '@/lib/queryClient';
+import { useState } from 'react';
 
 export function LoginScreen() {
-    const { clientId } = useAuth();
+    const { clientId, refreshSession } = useAuth();
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleDevLogin = async () => {
+        setIsLoading(true);
+        try {
+            const response = await apiRequest('POST', '/api/auth/dev-login');
+            if (response.ok) {
+                await refreshSession();
+            }
+        } catch (error) {
+            console.error('Dev login failed:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-950 to-black p-6">
@@ -34,9 +52,18 @@ export function LoginScreen() {
                             {clientId ? (
                                 <GoogleSignInButton className="w-full" />
                             ) : (
-                                <p className="text-sm text-destructive text-center">
-                                    Google login is not configured. Set <code className="font-mono text-xs">VITE_GOOGLE_CLIENT_ID</code> in your environment.
-                                </p>
+                                <div className="w-full flex flex-col items-center gap-4">
+                                    <p className="text-sm text-muted-foreground text-center">
+                                        Google login is not configured.
+                                    </p>
+                                    <Button 
+                                        onClick={handleDevLogin}
+                                        disabled={isLoading}
+                                        className="w-full"
+                                    >
+                                        {isLoading ? 'Signing in...' : 'Continue as Dev User'}
+                                    </Button>
+                                </div>
                             )}
                         </div>
                         <p className="text-xs text-muted-foreground text-center max-w-xs">

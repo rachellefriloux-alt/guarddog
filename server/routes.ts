@@ -117,10 +117,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ authenticated: false });
   });
 
+  // Development-only bypass login when Google auth is not configured
+  app.post("/api/auth/dev-login", async (req, res) => {
+    if (googleAuthService.isConfigured()) {
+      return res.status(403).json({ message: "Dev login not allowed when Google auth is configured." });
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      req.session.regenerate((err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+
+    const devUser = {
+      id: "dev-user-123",
+      email: "dev@guarddog.local",
+      name: "Development User",
+      picture: null,
+    };
+
+    req.session.user = devUser;
+
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+
+    res.json({ authenticated: true, user: devUser });
+  });
+
   const unauthenticatedApiPaths = new Set([
     "/api/auth/google",
     "/api/auth/session",
     "/api/auth/logout",
+    "/api/auth/dev-login",
   ]);
 
   app.use((req, res, next) => {
