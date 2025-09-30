@@ -38,10 +38,10 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
     }
   }, []);
 
-  const resolveHlsUrl = (url: string) => {
+  const resolveHlsUrl = useCallback((url: string) => {
     if (!url) return '';
     return url.startsWith('http') ? url : `${window.location.origin}${url}`;
-  };
+  }, []);
 
   const setupVideoStream = useCallback((rawUrl: string) => {
     const videoEl = videoRef.current;
@@ -85,7 +85,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
       if (response.ok) {
         const status = await response.json();
         setStreamInfo(status);
-        
+
         // If stream is active, set up video element
         if (status.isActive && status.hlsUrl && videoRef.current) {
           setupVideoStream(status.hlsUrl);
@@ -106,19 +106,16 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
     };
   }, [camera.id, camera.type, checkStreamStatus, cleanupHls]);
 
-  const startStream = async () => {
+  const startStream = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await apiRequest('POST', `/api/cameras/${camera.id}/start-stream`);
       if (response.ok) {
         const streamData = await response.json();
         setStreamInfo({ isActive: true, ...streamData });
-        
+
         if (streamData.hlsUrl) {
           setupVideoStream(streamData.hlsUrl);
-          window.setTimeout(() => {
-            void checkStreamStatus({ autoStartIfInactive: false });
-          }, 1500);
         }
       }
     } catch (error) {
@@ -126,7 +123,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [camera.id, setupVideoStream]);
 
   const stopStream = async () => {
     setIsLoading(true);
@@ -183,7 +180,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
   const wifiStrengthColor = (camera.wifiStrength ?? 0) > 90 ? 'text-success' : (camera.wifiStrength ?? 0) > 70 ? 'text-yellow-500' : 'text-alert';
 
   return (
-    <Card 
+    <Card
       className="overflow-hidden group hover:shadow-lg transition-shadow"
       data-testid={`camera-card-${camera.id}`}
       onMouseEnter={() => setIsHovered(true)}
@@ -206,14 +203,14 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
               }}
             />
           ) : (
-            <img 
+            <img
               src={getPlaceholderImage(camera.location)}
               alt={`${camera.name} camera feed`}
               className="w-full h-full object-cover"
               data-testid={`camera-image-${camera.id}`}
             />
           )}
-          
+
           {/* Recording indicator */}
           <div className="absolute top-4 left-4 flex items-center space-x-2">
             <div className={cn(
@@ -227,7 +224,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
 
           {/* Live/Stream indicator */}
           <div className="absolute top-4 right-4">
-            <Badge 
+            <Badge
               className={cn(
                 "text-white font-medium",
                 streamInfo.isActive ? "bg-success" : camera.isOnline ? "bg-yellow-500" : "bg-muted"
@@ -257,9 +254,9 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
           )}>
             <div className="flex space-x-3">
               {!streamInfo.isActive ? (
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
+                <Button
+                  size="icon"
+                  variant="ghost"
                   className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                   onClick={startStream}
                   disabled={isLoading}
@@ -268,9 +265,9 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
                   {isLoading ? '...' : <Play size={20} />}
                 </Button>
               ) : (
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
+                <Button
+                  size="icon"
+                  variant="ghost"
                   className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                   onClick={stopStream}
                   disabled={isLoading}
@@ -279,11 +276,11 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
                   {isLoading ? '...' : <StopCircle size={20} />}
                 </Button>
               )}
-              
+
               {camera.isRecording ? (
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
+                <Button
+                  size="icon"
+                  variant="ghost"
                   className="w-12 h-12 bg-red-500/70 hover:bg-red-600/70 text-white"
                   onClick={stopRecording}
                   data-testid={`button-stop-recording-${camera.id}`}
@@ -291,9 +288,9 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
                   <StopCircle size={20} />
                 </Button>
               ) : (
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
+                <Button
+                  size="icon"
+                  variant="ghost"
                   className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                   onClick={startRecording}
                   disabled={!streamInfo.isActive}
@@ -302,18 +299,18 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
                   <Eye size={20} />
                 </Button>
               )}
-              
-              <Button 
-                size="icon" 
-                variant="ghost" 
+
+              <Button
+                size="icon"
+                variant="ghost"
                 className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                 data-testid={`button-fullscreen-${camera.id}`}
               >
                 <Maximize size={20} />
               </Button>
-              <Button 
-                size="icon" 
-                variant="ghost" 
+              <Button
+                size="icon"
+                variant="ghost"
                 className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                 data-testid={`button-download-${camera.id}`}
               >
@@ -323,7 +320,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
           </div>
         </div>
       </div>
-      
+
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold" data-testid={`camera-name-${camera.id}`}>
@@ -339,11 +336,11 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
             </span>
           </div>
         </div>
-        
+
         <p className="text-sm text-muted-foreground mb-3" data-testid={`camera-details-${camera.id}`}>
           {camera.ipAddress} • {camera.type === 'ring' ? 'Ring' : 'ESEE'} {camera.resolution}
         </p>
-        
+
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center space-x-4">
             <span className="flex items-center space-x-1">
@@ -355,9 +352,9 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
               <span data-testid={`camera-wifi-${camera.id}`}>{camera.wifiStrength}%</span>
             </span>
           </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             className="text-primary hover:text-primary/80 font-medium"
             data-testid={`button-settings-${camera.id}`}
           >
