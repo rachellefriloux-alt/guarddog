@@ -1,12 +1,21 @@
 import { RingApi } from 'ring-client-api';
+import { RingRestClient } from 'ring-client-api/rest-client';
 import fs from 'fs-extra';
 import path from 'path';
+import crypto from 'crypto';
 
 export class RingAuthService {
   private ringApi: RingApi | null = null;
   private isAuthenticated = false;
   private credentials: { email?: string; refreshToken?: string } | null = null;
   private credentialsPath = path.join(process.cwd(), 'storage', 'ring-credentials.json');
+  private pendingAuthentications = new Map<string, {
+    restClient: RingRestClient;
+    email: string;
+    createdAt: number;
+    timeout: NodeJS.Timeout;
+  }>();
+  private readonly pendingAuthTimeoutMs = 5 * 60 * 1000;
 
   constructor() {
     this.loadStoredCredentials();
@@ -49,24 +58,8 @@ export class RingAuthService {
         return false;
       }
 
-      this.ringApi = new RingApi({
-        refreshToken: this.credentials.refreshToken,
-        debug: process.env.NODE_ENV === 'development'
-      });
-
-      // Subscribe to refresh token updates (REQUIRED for push notifications)
-      this.ringApi.onRefreshTokenUpdated.subscribe(
-        ({ newRefreshToken, oldRefreshToken }) => {
-          console.log('Ring refresh token updated');
-          this.updateStoredRefreshToken(newRefreshToken);
-        }
-      );
-
-      // Test the connection
-      await this.ringApi.getProfile();
-      this.isAuthenticated = true;
-      console.log('Ring API initialized with stored refresh token');
-      return true;
+      const result = await this.authenticateWithRefreshToken(this.credentials.refreshToken);
+      return result.success;
     } catch (error) {
       console.error('Error initializing Ring API with refresh token:', error);
       this.isAuthenticated = false;
@@ -86,11 +79,11 @@ export class RingAuthService {
     }
   }
 
-  async authenticate(refreshToken: string): Promise<{ success: boolean; error?: string; requiresRefreshToken?: boolean }> {
+  async authenticate(refreshToken: string): Promise<{ success: boolean; error?: string; requiresRefreshToken?: boolean; email?: string }> {
     return await this.authenticateWithRefreshToken(refreshToken);
   }
 
-  async authenticateWithRefreshToken(refreshToken: string): Promise<{ success: boolean; error?: string }> {
+  async authenticateWithRefreshToken(refreshToken: string): Promise<{ success: boolean; error?: string; email?: string }> {
     try {
       console.log('Attempting Ring authentication with refresh token...');
       
@@ -120,12 +113,138 @@ export class RingAuthService {
       this.isAuthenticated = true;
       
       console.log(`Ring authentication successful with refresh token for user: ${profile.profile.email}`);
-      return { success: true };
+      return { success: true, email: profile.profile.email };
     } catch (error: any) {
       console.error('Ring refresh token authentication error:', error);
       return { 
         success: false, 
         error: 'Invalid refresh token. Please generate a new one using the Ring CLI tool.'
+      };
+    }
+  }
+
+  private createPendingAuthentication(restClient: RingRestClient, email: string): { pendingAuthId: string; message?: string } {
+    const pendingAuthId = crypto.randomUUID();
+    const timeout = setTimeout(() => {
+      this.clearPendingAuthentication(pendingAuthId);
+    }, this.pendingAuthTimeoutMs);
+
+    this.pendingAuthentications.set(pendingAuthId, {
+      restClient,
+      email,
+      createdAt: Date.now(),
+      timeout
+    });
+
+    return {
+      pendingAuthId,
+      message: restClient.promptFor2fa
+    };
+  }
+
+  private clearPendingAuthentication(pendingAuthId: string): void {
+    const pending = this.pendingAuthentications.get(pendingAuthId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      pending.restClient.clearTimeouts();
+      this.pendingAuthentications.delete(pendingAuthId);
+    }
+  }
+
+  async startEmailAuthentication(email: string, password: string): Promise<{
+    success: boolean;
+    requiresTwoFactor?: boolean;
+    pendingAuthId?: string;
+    message?: string;
+    error?: string;
+    email?: string;
+  }> {
+    const restClient = new RingRestClient({ email, password });
+
+    try {
+      const auth = await restClient.getCurrentAuth();
+      restClient.clearTimeouts();
+
+      const result = await this.authenticateWithRefreshToken(auth.refresh_token);
+      if (result.success) {
+        return {
+          success: true,
+          requiresTwoFactor: false,
+          email: result.email,
+          message: 'Ring account connected successfully'
+        };
+      }
+
+      return {
+        success: false,
+        error: result.error || 'Failed to authenticate with Ring'
+      };
+    } catch (error: any) {
+      if (restClient.promptFor2fa) {
+        const pending = this.createPendingAuthentication(restClient, email);
+        return {
+          success: true,
+          requiresTwoFactor: true,
+          pendingAuthId: pending.pendingAuthId,
+          message: restClient.promptFor2fa
+        };
+      }
+
+      restClient.clearTimeouts();
+      console.error('Ring email/password authentication error:', error);
+      return {
+        success: false,
+        error: 'Failed to authenticate with Ring. Please check your credentials and try again.'
+      };
+    }
+  }
+
+  async submitTwoFactorCode(pendingAuthId: string, twoFactorCode: string): Promise<{
+    success: boolean;
+    error?: string;
+    retryable?: boolean;
+    email?: string;
+  }> {
+    const pending = this.pendingAuthentications.get(pendingAuthId);
+
+    if (!pending) {
+      return {
+        success: false,
+        error: 'Authentication session has expired. Please start again.',
+      };
+    }
+
+    try {
+      const auth = await pending.restClient.getAuth(twoFactorCode);
+      this.clearPendingAuthentication(pendingAuthId);
+
+      const result = await this.authenticateWithRefreshToken(auth.refresh_token);
+      if (result.success) {
+        return {
+          success: true,
+          email: result.email
+        };
+      }
+
+      return {
+        success: false,
+        error: result.error || 'Failed to authenticate with Ring after verifying 2FA code.'
+      };
+    } catch (error: any) {
+      console.error('Ring 2FA verification error:', error);
+
+      if (pending.restClient.promptFor2fa) {
+        return {
+          success: false,
+          retryable: true,
+          error: 'Invalid or expired 2FA code. Please try again.'
+        };
+      }
+
+      this.clearPendingAuthentication(pendingAuthId);
+      return {
+        success: false,
+        error: 'Failed to verify 2FA code. Please restart the login process.'
       };
     }
   }

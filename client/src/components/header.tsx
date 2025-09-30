@@ -1,7 +1,9 @@
-import { Plus, Moon, Sun, User, Settings } from 'lucide-react';
+import { Plus, Moon, Sun, Settings } from 'lucide-react';
 import { useTheme } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 interface HeaderProps {
   layout: '2x2' | '3x3' | '4x4';
@@ -12,8 +14,16 @@ interface HeaderProps {
 
 export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAccountSettings }: HeaderProps) {
   const { isDark, toggleTheme } = useTheme();
+  const { user } = useAuth();
 
   const layoutOptions: Array<'2x2' | '3x3' | '4x4'> = ['2x2', '3x3', '4x4'];
+
+  const userInitials = (user?.name || user?.email || 'U')
+    .split(' ')
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <header className="bg-card border-b border-border px-6 py-4" data-testid="header">
@@ -22,7 +32,7 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           <h2 className="text-2xl font-bold font-sans">Dashboard</h2>
           <p className="text-muted-foreground">Monitor your cameras in real-time</p>
         </div>
-        
+
         <div className="flex items-center space-x-4">
           {/* Layout Controls */}
           <div className="flex bg-muted rounded-lg p-1" data-testid="layout-controls">
@@ -44,7 +54,7 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           </div>
 
           {/* Add Camera Button */}
-          <Button 
+          <Button
             onClick={onAddCamera}
             className="bg-secondary text-secondary-foreground hover:opacity-90"
             data-testid="button-add-camera"
@@ -54,8 +64,8 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           </Button>
 
           {/* Account Settings Button */}
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={onOpenAccountSettings}
             data-testid="button-account-settings"
           >
@@ -64,8 +74,8 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           </Button>
 
           {/* Dark Mode Toggle */}
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             size="icon"
             onClick={toggleTheme}
             data-testid="button-theme-toggle"
@@ -75,10 +85,17 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
 
           {/* User Menu */}
           <div className="flex items-center space-x-2" data-testid="user-menu">
-            <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-              <User className="text-primary-foreground" size={16} />
+            <Avatar className="h-9 w-9">
+              {user?.picture ? (
+                <AvatarImage src={user.picture} alt={user?.name ?? user?.email ?? 'GuardDog user'} />
+              ) : (
+                <AvatarFallback>{userInitials}</AvatarFallback>
+              )}
+            </Avatar>
+            <div className="flex flex-col leading-tight">
+              <span className="font-medium text-sm">{user?.name ?? user?.email ?? 'GuardDog User'}</span>
+              {user?.email && <span className="text-xs text-muted-foreground">{user.email}</span>}
             </div>
-            <span className="font-medium">Admin</span>
           </div>
         </div>
       </div>

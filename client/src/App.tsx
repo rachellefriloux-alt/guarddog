@@ -5,6 +5,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/dashboard";
 import NotFound from "@/pages/not-found";
+import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { LoginScreen } from "@/components/login-screen";
+import { Loader2 } from "lucide-react";
 
 function Router() {
   return (
@@ -15,13 +18,36 @@ function Router() {
   );
 }
 
+function AuthGate() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <p>Checking your GuardDog session…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
+  return <Router />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <AuthGate />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

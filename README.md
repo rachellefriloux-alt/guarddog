@@ -47,18 +47,26 @@ A comprehensive Web-based IP camera surveillance dashboard that unifies Ring doo
    ```
 
 3. **Environment Configuration**
+
    ```bash
    cp .env.example .env
    # Edit .env with your configuration
    ```
 
+   At minimum you'll need to:
+
+   - Create a Google **OAuth Web Client** in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and copy the Client ID into `GOOGLE_AUTH_CLIENT_ID` and `VITE_GOOGLE_CLIENT_ID` (you may reuse the same ID).
+   - (Optional) Create a separate OAuth client for Google Drive API access and add its credentials to `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` if you plan to sync recordings to Drive.
+   - Update `SESSION_SECRET` with a strong random string before deploying to production.
 4. **Start development server**
+
    ```bash
    npm run dev
    ```
 
 5. **Access the dashboard**
-   ```
+
+   ```text
    http://localhost:5000
    ```
 
@@ -80,31 +88,36 @@ npm start
 ## 🎯 API Endpoints
 
 ### Camera Management
+
 - `GET /api/cameras` - List all cameras
 - `POST /api/cameras` - Add new camera
 - `PUT /api/cameras/:id` - Update camera settings
 - `DELETE /api/cameras/:id` - Remove camera
 
 ### Recording & Playback
+
 - `GET /api/recordings` - List recordings
 - `POST /api/recordings` - Create new recording
 - `GET /api/recordings/:id` - Get specific recording
 
 ### AI Detection
+
 - `GET /api/detections` - List recent detections
 - `POST /api/ai/detect` - Process AI detection
 
 ### Cloud Storage
+
 - `GET /api/cloud-files` - List cloud files
 - `POST /api/cloud-files/upload` - Upload file to cloud
 - `DELETE /api/cloud-files/:id` - Delete cloud file
 
 ### System Stats
+
 - `GET /api/system/stats` - Get system statistics
 
 ## 📁 Project Structure
 
-```
+```text
 guarddog/
 ├── client/                 # React frontend
 │   ├── src/
@@ -129,6 +142,7 @@ guarddog/
 ## 🔧 Configuration
 
 ### Camera Setup
+
 Add cameras through the web interface or API:
 
 ```json
@@ -143,6 +157,7 @@ Add cameras through the web interface or API:
 ```
 
 ### Environment Variables
+
 See `.env.example` for all available configuration options.
 
 ## 🤝 Contributing
@@ -160,6 +175,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🛡️ Security
 
 GuardDog includes several security features:
+
 - Session-based authentication
 - File upload validation and size limits
 - Input sanitization and validation
@@ -169,6 +185,7 @@ GuardDog includes several security features:
 ## 📞 Support
 
 For support and questions:
+
 - Create an issue on GitHub
 - Check the documentation
 - Review existing issues and discussions

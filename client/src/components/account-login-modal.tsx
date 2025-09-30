@@ -9,6 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, CheckCircle, AlertCircle, Cloud, Camera, HardDrive } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest } from '@/lib/queryClient';
+import { useAuth } from '@/hooks/use-auth';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 interface AccountLoginModalProps {
   isOpen: boolean;
@@ -23,6 +25,7 @@ interface ConnectionStatus {
 
 export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModalProps) {
   const { toast } = useToast();
+  const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = useState('google-drive');
   const [loading, setLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
@@ -36,8 +39,17 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
 
   // Ring states
   const [ringCredentials, setRingCredentials] = useState({
+    email: '',
+    password: '',
     refreshToken: ''
   });
+  const [ringTwoFactor, setRingTwoFactor] = useState({
+    pendingAuthId: '',
+    code: '',
+    message: ''
+  });
+  const [ringAccountEmail, setRingAccountEmail] = useState<string | null>(null);
+  const [useRingRefreshToken, setUseRingRefreshToken] = useState(false);
 
   // ESEE Cloud states
   const [eseeCredentials, setEseeCredentials] = useState({
@@ -66,9 +78,17 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
 
       // Check Ring status
       try {
-        await apiRequest('GET', '/api/ring/status');
-        setConnectionStatus(prev => ({ ...prev, ring: 'connected' }));
+        const response = await apiRequest('GET', '/api/ring/status');
+        const data = await response.json();
+        if (data?.connected) {
+          setRingAccountEmail(data.email || null);
+          setConnectionStatus(prev => ({ ...prev, ring: 'connected' }));
+        } else {
+          setRingAccountEmail(null);
+          setConnectionStatus(prev => ({ ...prev, ring: 'disconnected' }));
+        }
       } catch {
+        setRingAccountEmail(null);
         setConnectionStatus(prev => ({ ...prev, ring: 'disconnected' }));
       }
 
@@ -126,24 +146,89 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
       setLoading(true);
       setConnectionStatus(prev => ({ ...prev, ring: 'connecting' }));
 
-      const response = await apiRequest('POST', '/api/ring/auth', ringCredentials);
+      const payload = useRingRefreshToken
+        ? { refreshToken: ringCredentials.refreshToken.trim() }
+        : {
+          email: ringCredentials.email.trim(),
+          password: ringCredentials.password
+        };
 
-      if (response.ok) {
-        setConnectionStatus(prev => ({ ...prev, ring: 'connected' }));
-        toast({
-          title: "Ring Connected",
-          description: "Successfully connected to Ring account",
-        });
-        setRingCredentials({ refreshToken: '' });
-      } else {
-        const error = await response.json();
-        throw new Error(error.message);
+      const response = await apiRequest('POST', '/api/ring/auth', payload);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.message || 'Failed to connect to Ring');
       }
+
+      if (data?.requiresTwoFactor && data.pendingAuthId) {
+        setRingTwoFactor({
+          pendingAuthId: data.pendingAuthId,
+          code: '',
+          message: data.message || 'Enter the 2FA code sent to your device'
+        });
+        setConnectionStatus(prev => ({ ...prev, ring: 'disconnected' }));
+        toast({
+          title: "Two-Factor Required",
+          description: "Enter the 2FA code from Ring to finish connecting",
+        });
+        return;
+      }
+
+      setConnectionStatus(prev => ({ ...prev, ring: 'connected' }));
+      setRingAccountEmail(data?.email || null);
+      toast({
+        title: "Ring Connected",
+        description: "Successfully connected to Ring account",
+      });
+      setRingCredentials({ email: '', password: '', refreshToken: '' });
+      setRingTwoFactor({ pendingAuthId: '', code: '', message: '' });
+      checkConnectionStatuses();
     } catch (error) {
       setConnectionStatus(prev => ({ ...prev, ring: 'error' }));
       toast({
         title: "Ring Connection Failed",
         description: error instanceof Error ? error.message : "Failed to connect to Ring",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRingTwoFactorSubmit = async () => {
+    try {
+      setLoading(true);
+      setConnectionStatus(prev => ({ ...prev, ring: 'connecting' }));
+
+      const response = await apiRequest('POST', '/api/ring/auth/verify', {
+        pendingAuthId: ringTwoFactor.pendingAuthId,
+        twoFactorCode: ringTwoFactor.code.trim()
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data?.retryable) {
+          throw new Error(data?.message || 'Invalid 2FA code. Please try again.');
+        }
+
+        setRingTwoFactor({ pendingAuthId: '', code: '', message: '' });
+        throw new Error(data?.message || 'Failed to verify 2FA code. Please restart the login process.');
+      }
+
+      setConnectionStatus(prev => ({ ...prev, ring: 'connected' }));
+      setRingAccountEmail(data?.email || null);
+      toast({
+        title: "Ring Connected",
+        description: "Two-factor authentication successful",
+      });
+      setRingCredentials({ email: '', password: '', refreshToken: '' });
+      setRingTwoFactor({ pendingAuthId: '', code: '', message: '' });
+      checkConnectionStatuses();
+    } catch (error) {
+      setConnectionStatus(prev => ({ ...prev, ring: 'error' }));
+      toast({
+        title: "Ring 2FA Failed",
+        description: error instanceof Error ? error.message : "Failed to verify Ring 2FA code",
         variant: "destructive",
       });
     } finally {
@@ -201,6 +286,11 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
 
       if (service === 'googleDrive') {
         setGoogleDriveUsage(null);
+      } else if (service === 'ring') {
+        setRingAccountEmail(null);
+        setRingCredentials({ email: '', password: '', refreshToken: '' });
+        setRingTwoFactor({ pendingAuthId: '', code: '', message: '' });
+        setUseRingRefreshToken(false);
       }
     } catch (error) {
       toast({
@@ -226,6 +316,13 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
     }
   };
 
+  const userInitials = (user?.name || user?.email || 'U')
+    .split(' ')
+    .map(part => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
@@ -235,6 +332,27 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
             Account Connections
           </DialogTitle>
         </DialogHeader>
+
+        {user && (
+          <div className="mb-4 rounded-lg border border-border bg-muted/40 p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Avatar className="h-12 w-12">
+                {user.picture ? (
+                  <AvatarImage src={user.picture} alt={user.name ?? user.email} />
+                ) : (
+                  <AvatarFallback>{userInitials}</AvatarFallback>
+                )}
+              </Avatar>
+              <div>
+                <p className="font-semibold leading-tight">{user.name ?? user.email}</p>
+                <p className="text-sm text-muted-foreground">{user.email}</p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={signOut} disabled={loading}>
+              Sign out
+            </Button>
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-3">
@@ -331,7 +449,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
               <CardContent className="space-y-4">
                 {connectionStatus.ring === 'connected' ? (
                   <div className="space-y-3">
-                    <p className="text-sm text-success">✓ Ring account is connected and ready</p>
+                    <p className="text-sm text-success">✓ Ring account is connected{ringAccountEmail ? ` (${ringAccountEmail})` : ''}</p>
                     <Button
                       onClick={() => handleDisconnectService('ring')}
                       variant="outline"
@@ -340,30 +458,114 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                       Disconnect Ring Account
                     </Button>
                   </div>
-                ) : (
-                  <div className="space-y-3">
+                ) : ringTwoFactor.pendingAuthId ? (
+                  <div className="space-y-4">
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
-                      <p className="font-medium text-blue-800 mb-2">🔑 Ring Refresh Token Required</p>
-                      <p className="text-blue-700 mb-2">Ring no longer supports password authentication. You need to generate a refresh token using the Ring CLI tool:</p>
-                      <code className="bg-blue-100 px-2 py-1 rounded text-blue-800 font-mono text-xs">
-                        npx -p ring-client-api ring-auth-cli
-                      </code>
-                      <p className="text-blue-700 mt-2">Follow the prompts to enter your Ring credentials and 2FA code, then copy the refresh token below.</p>
+                      <p className="font-medium text-blue-800 mb-2">� Two-Factor Authentication Required</p>
+                      <p className="text-blue-700">{ringTwoFactor.message || 'Enter the 2FA code from your Ring app to continue.'}</p>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="ring-refresh-token">Ring Refresh Token</Label>
+                      <Label htmlFor="ring-two-factor">2FA Code</Label>
                       <Input
-                        id="ring-refresh-token"
+                        id="ring-two-factor"
                         type="text"
-                        placeholder="Paste your Ring refresh token here..."
-                        value={ringCredentials.refreshToken}
-                        onChange={(e) => setRingCredentials(prev => ({ ...prev, refreshToken: e.target.value }))}
-                        className="font-mono text-xs"
+                        inputMode="numeric"
+                        placeholder="Enter your 2FA code..."
+                        value={ringTwoFactor.code}
+                        onChange={(e) => setRingTwoFactor(prev => ({ ...prev, code: e.target.value }))}
+                        className="font-mono"
                       />
                     </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Button
+                        onClick={handleRingTwoFactorSubmit}
+                        disabled={loading || !ringTwoFactor.code}
+                        className="flex-1"
+                      >
+                        {connectionStatus.ring === 'connecting' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Verifying...
+                          </>
+                        ) : (
+                          <>
+                            <Camera className="w-4 h-4 mr-2" />
+                            Verify 2FA Code
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setRingTwoFactor({ pendingAuthId: '', code: '', message: '' });
+                          setConnectionStatus(prev => ({ ...prev, ring: 'disconnected' }));
+                        }}
+                        disabled={loading}
+                      >
+                        Start Over
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {!useRingRefreshToken ? (
+                      <>
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+                          <p className="font-medium text-blue-800 mb-2">🔐 Secure Sign In</p>
+                          <p className="text-blue-700">Sign in with your Ring email and password. If your account has 2FA enabled, we'll prompt you for the code automatically.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="ring-email">Ring Email</Label>
+                          <Input
+                            id="ring-email"
+                            type="email"
+                            value={ringCredentials.email}
+                            onChange={(e) => setRingCredentials(prev => ({ ...prev, email: e.target.value }))}
+                            placeholder="name@example.com"
+                            autoComplete="email"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="ring-password">Ring Password</Label>
+                          <Input
+                            id="ring-password"
+                            type="password"
+                            value={ringCredentials.password}
+                            onChange={(e) => setRingCredentials(prev => ({ ...prev, password: e.target.value }))}
+                            placeholder="Enter your Ring password"
+                            autoComplete="current-password"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+                          <p className="font-medium text-blue-800 mb-2">🔑 Use an Existing Refresh Token</p>
+                          <p className="text-blue-700">Paste a refresh token generated with the official Ring CLI if you prefer to authenticate manually.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="ring-refresh-token">Ring Refresh Token</Label>
+                          <Input
+                            id="ring-refresh-token"
+                            type="text"
+                            placeholder="Paste your Ring refresh token here..."
+                            value={ringCredentials.refreshToken}
+                            onChange={(e) => setRingCredentials(prev => ({ ...prev, refreshToken: e.target.value }))}
+                            className="font-mono text-xs"
+                          />
+                        </div>
+                      </>
+                    )}
                     <Button
                       onClick={handleRingLogin}
-                      disabled={loading || !ringCredentials.refreshToken}
+                      disabled={
+                        loading ||
+                        connectionStatus.ring === 'connecting' ||
+                        (useRingRefreshToken
+                          ? !ringCredentials.refreshToken
+                          : !ringCredentials.email || !ringCredentials.password)
+                      }
                       className="w-full"
                     >
                       {connectionStatus.ring === 'connecting' ? (
@@ -377,6 +579,22 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                           Connect Ring Account
                         </>
                       )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="h-auto p-0 text-xs"
+                      onClick={() => {
+                        setUseRingRefreshToken(prev => !prev);
+                        setRingCredentials(prev => ({
+                          email: prev.email,
+                          password: '',
+                          refreshToken: ''
+                        }));
+                      }}
+                      disabled={loading}
+                    >
+                      {useRingRefreshToken ? 'Sign in with email and password instead' : 'Have a refresh token? Paste it instead'}
                     </Button>
                   </div>
                 )}

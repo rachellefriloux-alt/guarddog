@@ -14,6 +14,7 @@ import { dailySummaryService } from "./services/daily-summary-service";
 import { ringAuthService } from "./services/ring-auth-service";
 import { eseeCloudService } from "./services/esee-cloud-service";
 import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
+import { googleAuthService } from "./services/google-auth-service";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -50,6 +51,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
   };
+
+  // Authentication routes
+  app.get("/api/auth/session", (req, res) => {
+    if (req.session?.user) {
+      return res.json({ authenticated: true, user: req.session.user });
+    }
+
+    res.json({ authenticated: false });
+  });
+
+  app.post("/api/auth/google", async (req, res) => {
+    try {
+      if (!googleAuthService.isConfigured()) {
+        return res.status(503).json({ message: "Google login is not configured on the server." });
+      }
+
+      const { credential } = req.body || {};
+
+      if (!credential || typeof credential !== "string") {
+        return res.status(400).json({ message: "Google credential is required." });
+      }
+
+      const profile = await googleAuthService.verifyIdToken(credential);
+
+      await new Promise<void>((resolve, reject) => {
+        req.session.regenerate((err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      req.session.user = {
+        id: profile.id,
+        email: profile.email,
+        name: profile.name,
+        picture: profile.picture,
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      res.json({ authenticated: true, user: req.session.user });
+    } catch (error) {
+      console.error("Google authentication error:", error);
+      const message = error instanceof Error ? error.message : "Failed to verify Google credential.";
+      res.status(401).json({ message });
+    }
+  });
+
+  app.post("/api/auth/logout", async (req, res) => {
+    await new Promise<void>((resolve) => {
+      req.session.destroy(() => resolve());
+    });
+    res.json({ authenticated: false });
+  });
+
+  const unauthenticatedApiPaths = new Set([
+    "/api/auth/google",
+    "/api/auth/session",
+    "/api/auth/logout",
+  ]);
+
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api")) {
+      return next();
+    }
+
+    if (unauthenticatedApiPaths.has(req.path)) {
+      return next();
+    }
+
+    if (req.session?.user) {
+      return next();
+    }
+
+    return res.status(401).json({ message: "Authentication required" });
+  });
 
   // Camera routes
   app.get("/api/cameras", async (req, res) => {
@@ -371,28 +459,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/ring/auth", async (req, res) => {
     try {
-      const { refreshToken } = req.body;
-      
-      if (!refreshToken) {
-        return res.status(400).json({ 
-          message: "Refresh token is required. Ring no longer supports password authentication. Please use the Ring CLI tool to generate a refresh token: npx -p ring-client-api ring-auth-cli",
+      const { refreshToken, email, password } = req.body;
+
+      if (refreshToken) {
+        const result = await ringAuthService.authenticate(refreshToken);
+
+        if (result.success) {
+          broadcast({ type: 'ring_connected' });
+          return res.json({ success: true, message: "Ring account connected successfully", email: result.email });
+        }
+
+        return res.status(400).json({
+          success: false,
+          message: result.error,
           requiresRefreshToken: true
         });
       }
 
-      const result = await ringAuthService.authenticate(refreshToken);
-      
-      if (result.success) {
-        broadcast({ type: 'ring_connected' });
-        res.json({ success: true, message: "Ring account connected successfully" });
-      } else {
-        res.status(400).json({ 
-          message: result.error,
-          requiresRefreshToken: result.requiresRefreshToken 
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          message: "Email and password are required"
         });
       }
+
+      const result = await ringAuthService.startEmailAuthentication(email, password);
+
+      if (result.success && result.requiresTwoFactor) {
+        return res.json({
+          success: true,
+          requiresTwoFactor: true,
+          pendingAuthId: result.pendingAuthId,
+          message: result.message
+        });
+      }
+
+      if (result.success) {
+        broadcast({ type: 'ring_connected' });
+        return res.json({
+          success: true,
+          message: result.message,
+          email: result.email
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: result.error || 'Ring authentication failed'
+      });
     } catch (error) {
+      console.error('Ring authentication error:', error);
       res.status(500).json({ message: "Ring authentication failed" });
+    }
+  });
+
+  app.post("/api/ring/auth/verify", async (req, res) => {
+    try {
+      const { pendingAuthId, twoFactorCode } = req.body;
+
+      if (!pendingAuthId || !twoFactorCode) {
+        return res.status(400).json({
+          success: false,
+          message: "Pending authentication ID and 2FA code are required"
+        });
+      }
+
+      const result = await ringAuthService.submitTwoFactorCode(pendingAuthId, twoFactorCode);
+
+      if (result.success) {
+        broadcast({ type: 'ring_connected' });
+        return res.json({
+          success: true,
+          message: "Ring account connected successfully",
+          email: result.email
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: result.error,
+        retryable: result.retryable
+      });
+    } catch (error) {
+      console.error('Ring 2FA verification error:', error);
+      res.status(500).json({ message: "Failed to verify Ring 2FA code" });
     }
   });
 

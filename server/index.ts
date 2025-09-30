@@ -1,4 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import createMemoryStore from "memorystore";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { recognitionService } from "./services/recognition-service";
@@ -7,6 +9,30 @@ import { dailySummaryService } from "./services/daily-summary-service";
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+const MemoryStore = createMemoryStore(session);
+
+const sessionSecret = process.env.SESSION_SECRET || "guarddog-development-secret";
+
+if (!process.env.SESSION_SECRET) {
+  console.warn("[GuardDog] SESSION_SECRET is not set. Using a development fallback secret. Set SESSION_SECRET in your environment for production deployments.");
+}
+
+app.use(
+  session({
+    name: "guarddog.sid",
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store: new MemoryStore({ checkPeriod: 1000 * 60 * 60 * 24 }),
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    },
+  })
+);
 
 app.use((req, res, next) => {
   const start = Date.now();
