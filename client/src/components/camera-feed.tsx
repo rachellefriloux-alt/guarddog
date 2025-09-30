@@ -36,7 +36,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
   };
 
   const detection = getRecentDetection();
-  const wifiStrengthColor = camera.wifiStrength > 90 ? 'text-success' : camera.wifiStrength > 70 ? 'text-yellow-500' : 'text-alert';
+  const wifiStrengthColor = (camera.wifiStrength ?? 0) > 90 ? 'text-success' : (camera.wifiStrength ?? 0) > 70 ? 'text-yellow-500' : 'text-alert';
 
   return (
     <Card 

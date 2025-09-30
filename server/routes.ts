@@ -72,7 +72,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: 'camera_added', camera });
       res.status(201).json(camera);
     } catch (error) {
-      res.status(400).json({ message: "Invalid camera data", error: error.message });
+      res.status(400).json({ 
+        message: "Invalid camera data", 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
     }
   });
 
@@ -88,7 +91,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: 'camera_updated', camera });
       res.json(camera);
     } catch (error) {
-      res.status(400).json({ message: "Invalid update data", error: error.message });
+      res.status(400).json({ 
+        message: "Invalid update data", 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
     }
   });
 
@@ -206,7 +212,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: 'file_uploaded', file: cloudFile });
       res.status(201).json(cloudFile);
     } catch (error) {
-      res.status(400).json({ message: "Failed to upload file", error: error.message });
+      res.status(400).json({ 
+        message: "Failed to upload file", 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
     }
   });
 
