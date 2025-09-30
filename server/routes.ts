@@ -8,6 +8,9 @@ import { storage } from "./storage";
 import { cameraService } from "./services/camera-service";
 import { streamService } from "./services/stream-service";
 import { fileStorageService } from "./services/file-storage-service";
+import { googleDriveService } from "./services/google-drive-service";
+import { recognitionService } from "./services/recognition-service";
+import { dailySummaryService } from "./services/daily-summary-service";
 import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 
 const upload = multer({ 
@@ -351,6 +354,180 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch system stats" });
+    }
+  });
+
+  // Google Drive authentication routes
+  app.get("/api/google-drive/auth-url", async (req, res) => {
+    try {
+      const authUrl = googleDriveService.getAuthUrl();
+      res.json({ authUrl });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get auth URL" });
+    }
+  });
+
+  app.post("/api/google-drive/auth", async (req, res) => {
+    try {
+      const { code } = req.body;
+      const refreshToken = await googleDriveService.handleAuthCallback(code);
+      
+      if (refreshToken) {
+        res.json({ success: true, message: "Google Drive connected successfully" });
+      } else {
+        res.status(400).json({ message: "Failed to authenticate with Google Drive" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Authentication error" });
+    }
+  });
+
+  app.get("/api/google-drive/storage", async (req, res) => {
+    try {
+      const usage = await googleDriveService.getStorageUsage();
+      res.json(usage);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get storage usage" });
+    }
+  });
+
+  app.get("/api/google-drive/files", async (req, res) => {
+    try {
+      const { cameraId } = req.query;
+      const files = await googleDriveService.listFiles(cameraId as string);
+      res.json(files);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to list files" });
+    }
+  });
+
+  app.delete("/api/google-drive/files/:fileId", async (req, res) => {
+    try {
+      const success = await googleDriveService.deleteFile(req.params.fileId);
+      if (success) {
+        res.json({ message: "File deleted successfully" });
+      } else {
+        res.status(404).json({ message: "File not found or deletion failed" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete file" });
+    }
+  });
+
+  // AI Recognition routes
+  app.get("/api/recognition/stats", async (req, res) => {
+    try {
+      const stats = await recognitionService.getRecognitionStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get recognition stats" });
+    }
+  });
+
+  app.get("/api/recognition/people", async (req, res) => {
+    try {
+      const people = await storage.getPersonProfiles();
+      res.json(people);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get people" });
+    }
+  });
+
+  app.get("/api/recognition/animals", async (req, res) => {
+    try {
+      const animals = await storage.getAnimalProfiles();
+      res.json(animals);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get animals" });
+    }
+  });
+
+  app.get("/api/recognition/vehicles", async (req, res) => {
+    try {
+      const vehicles = await storage.getVehicles();
+      res.json(vehicles);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get vehicles" });
+    }
+  });
+
+  app.post("/api/recognition/people/:id/mark-known", async (req, res) => {
+    try {
+      const { name, trustLevel } = req.body;
+      const success = await recognitionService.markPersonAsKnown(req.params.id, name, trustLevel);
+      
+      if (success) {
+        broadcast({ type: 'person_marked_known', personId: req.params.id, name });
+        res.json({ message: "Person marked as known" });
+      } else {
+        res.status(404).json({ message: "Person not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark person as known" });
+    }
+  });
+
+  app.post("/api/recognition/animals/:id/mark-known", async (req, res) => {
+    try {
+      const { name, isPet } = req.body;
+      const success = await recognitionService.markAnimalAsKnown(req.params.id, name, isPet);
+      
+      if (success) {
+        broadcast({ type: 'animal_marked_known', animalId: req.params.id, name });
+        res.json({ message: "Animal marked as known" });
+      } else {
+        res.status(404).json({ message: "Animal not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark animal as known" });
+    }
+  });
+
+  // Daily Summary routes
+  app.get("/api/daily-summary", async (req, res) => {
+    try {
+      const { date } = req.query;
+      const targetDate = date ? new Date(date as string) : new Date();
+      const summary = await dailySummaryService.generateDailySummary(targetDate);
+      
+      if (summary) {
+        res.json(summary);
+      } else {
+        res.status(404).json({ message: "No data available for this date" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to generate daily summary" });
+    }
+  });
+
+  app.get("/api/weekly-summary", async (req, res) => {
+    try {
+      const summary = await dailySummaryService.getWeeklySummary();
+      if (summary) {
+        res.json(summary);
+      } else {
+        res.status(404).json({ message: "No weekly data available" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get weekly summary" });
+    }
+  });
+
+  app.get("/api/recognition/learning-progress", async (req, res) => {
+    try {
+      const progress = await dailySummaryService.getRecognitionLearningProgress();
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get learning progress" });
+    }
+  });
+
+  app.get("/api/recognition/events", async (req, res) => {
+    try {
+      const events = await storage.getRecognitionEvents();
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get recognition events" });
     }
   });
 

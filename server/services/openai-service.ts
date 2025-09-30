@@ -135,6 +135,57 @@ export class OpenAIService {
       };
     }
   }
+
+  async analyzeImageWithPrompt(imageBase64: string, prompt: string): Promise<string> {
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return 'OpenAI API key not configured';
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4-vision-preview",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+            ]
+          }
+        ],
+        max_tokens: 500,
+      });
+
+      return response.choices[0]?.message?.content || 'No analysis available';
+    } catch (error) {
+      console.error('Error analyzing image with prompt:', error);
+      return 'Error analyzing image';
+    }
+  }
+
+  async generateText(prompt: string): Promise<string> {
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return 'OpenAI API key not configured';
+      }
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        max_tokens: 1000,
+      });
+
+      return response.choices[0]?.message?.content || 'No response generated';
+    } catch (error) {
+      console.error('Error generating text:', error);
+      return 'Error generating text';
+    }
+  }
 }
 
 export const openaiService = new OpenAIService();
