@@ -88,6 +88,12 @@ Before deploying to production, ensure you complete these critical steps:
 ```bash
 # Copy and configure environment variables
 cp .env.example .env
+# Edit .env with your actual configuration
+```
+
+**Validate your configuration:**
+```bash
+npm run validate-env
 ```
 
 **Required Configuration:**
@@ -404,6 +410,8 @@ tar -czf guarddog_storage_$(date +%Y%m%d).tar.gz storage/ uploads/
 - `npm start` - Start production server  
 - `npm run check` - TypeScript type checking
 - `npm run db:push` - Push database schema changes
+- `npm run validate-env` - Validate environment configuration
+- `npm test` - Run test suite
 
 ## 🎯 API Endpoints
 
