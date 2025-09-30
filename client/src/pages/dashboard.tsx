@@ -8,11 +8,13 @@ import CameraGrid from '@/components/camera-grid';
 import ActivityFeed from '@/components/activity-feed';
 import CloudStoragePanel from '@/components/cloud-storage-panel';
 import CameraSettingsModal from '@/components/camera-settings-modal';
+import AccountLoginModal from '@/components/account-login-modal';
 import { type Camera, type Detection, type SystemStats } from '@shared/schema';
 
 export default function Dashboard() {
   const [layout, setLayout] = useState<'2x2' | '3x3' | '4x4'>('2x2');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [realtimeDetections, setRealtimeDetections] = useState<Detection[]>([]);
   const [realtimeStats, setRealtimeStats] = useState<SystemStats | null>(null);
 
@@ -61,6 +63,7 @@ export default function Dashboard() {
           layout={layout} 
           onLayoutChange={setLayout}
           onAddCamera={() => setIsModalOpen(true)}
+          onOpenAccountSettings={() => setIsAccountModalOpen(true)}
         />
         
         <main className="flex-1 p-6 overflow-auto">
@@ -78,6 +81,11 @@ export default function Dashboard() {
       <CameraSettingsModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
+      />
+
+      <AccountLoginModal 
+        isOpen={isAccountModalOpen} 
+        onClose={() => setIsAccountModalOpen(false)} 
       />
     </div>
   );

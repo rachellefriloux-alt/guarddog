@@ -68,7 +68,7 @@ export default function ActivityFeed({ detections, cameras }: ActivityFeedProps)
                       </span>
                     </h4>
                     <span className="text-sm text-muted-foreground" data-testid={`detection-time-${detection.id}`}>
-                      {formatDistanceToNow(new Date(detection.createdAt), { addSuffix: true })}
+                      {detection.createdAt ? formatDistanceToNow(new Date(detection.createdAt), { addSuffix: true }) : 'Unknown time'}
                     </span>
                   </div>
                   

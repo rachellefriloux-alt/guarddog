@@ -22,11 +22,11 @@ export default {
           foreground: "var(--popover-foreground)",
         },
         primary: {
-          DEFAULT: "var(--primary)",
+          DEFAULT: "#0066CC", // Security blue
           foreground: "var(--primary-foreground)",
         },
         secondary: {
-          DEFAULT: "var(--secondary)",
+          DEFAULT: "#1E88E5", // Bright blue
           foreground: "var(--secondary-foreground)",
         },
         muted: {
@@ -44,8 +44,14 @@ export default {
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",
-        success: "var(--success)",
-        alert: "var(--alert)",
+        success: "#4CAF50", // Green
+        alert: "#FF5722", // Orange-red
+        guardian: {
+          background: "#F5F7FA", // Light grey
+          text: "#263238", // Dark blue-grey
+          blue: "#0066CC", // Security blue
+          brightBlue: "#1E88E5", // Bright blue
+        },
         chart: {
           "1": "var(--chart-1)",
           "2": "var(--chart-2)",

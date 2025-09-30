@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { 
   type Camera, type InsertCamera, 
   type Recording, type InsertRecording, 
@@ -255,8 +256,23 @@ export class MemStorage implements IStorage {
   async createCamera(insertCamera: InsertCamera): Promise<Camera> {
     const id = randomUUID();
     const camera: Camera = {
-      ...insertCamera,
       id,
+      type: insertCamera.type,
+      name: insertCamera.name,
+      location: insertCamera.location,
+      ipAddress: insertCamera.ipAddress,
+      port: insertCamera.port ?? "554",
+      streamUrl: insertCamera.streamUrl,
+      username: insertCamera.username ?? null,
+      password: insertCamera.password ?? null,
+      resolution: insertCamera.resolution ?? "1080p",
+      isOnline: insertCamera.isOnline ?? true,
+      wifiStrength: insertCamera.wifiStrength ?? 100,
+      aiDetectionEnabled: insertCamera.aiDetectionEnabled ?? true,
+      detectPeople: insertCamera.detectPeople ?? true,
+      detectPets: insertCamera.detectPets ?? true,
+      detectVehicles: insertCamera.detectVehicles ?? false,
+      isRecording: insertCamera.isRecording ?? true,
       createdAt: new Date(),
     };
     this.cameras.set(id, camera);
@@ -288,8 +304,13 @@ export class MemStorage implements IStorage {
   async createRecording(insertRecording: InsertRecording): Promise<Recording> {
     const id = randomUUID();
     const recording: Recording = {
-      ...insertRecording,
       id,
+      duration: insertRecording.duration,
+      cameraId: insertRecording.cameraId,
+      filename: insertRecording.filename,
+      fileSize: insertRecording.fileSize,
+      cloudUrl: insertRecording.cloudUrl ?? null,
+      isUploaded: insertRecording.isUploaded ?? false,
       createdAt: new Date(),
     };
     this.recordings.set(id, recording);
@@ -316,15 +337,21 @@ export class MemStorage implements IStorage {
 
   async getRecentDetections(limit = 10): Promise<Detection[]> {
     return Array.from(this.detections.values())
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .filter(d => d.createdAt !== null)
+      .sort((a, b) => (b.createdAt!.getTime() - a.createdAt!.getTime()))
       .slice(0, limit);
   }
 
   async createDetection(insertDetection: InsertDetection): Promise<Detection> {
     const id = randomUUID();
     const detection: Detection = {
-      ...insertDetection,
       id,
+      type: insertDetection.type,
+      cameraId: insertDetection.cameraId,
+      confidence: insertDetection.confidence,
+      metadata: insertDetection.metadata ?? null,
+      description: insertDetection.description ?? null,
+      recordingId: insertDetection.recordingId ?? null,
       createdAt: new Date(),
     };
     this.detections.set(id, detection);
@@ -333,7 +360,8 @@ export class MemStorage implements IStorage {
 
   async getCloudFiles(): Promise<CloudFile[]> {
     return Array.from(this.cloudFiles.values())
-      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+      .filter(f => f.uploadedAt !== null)
+      .sort((a, b) => (b.uploadedAt!.getTime() - a.uploadedAt!.getTime()));
   }
 
   async createCloudFile(insertCloudFile: InsertCloudFile): Promise<CloudFile> {
@@ -358,13 +386,13 @@ export class MemStorage implements IStorage {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const detectionsToday = Array.from(this.detections.values())
-      .filter(d => d.createdAt >= today).length;
+      .filter(d => d.createdAt && d.createdAt >= today).length;
 
     const cloudStorageUsed = Array.from(this.cloudFiles.values())
       .reduce((total, file) => total + file.fileSize, 0);
 
     const alertCount = Array.from(this.detections.values())
-      .filter(d => d.createdAt > new Date(Date.now() - 24 * 60 * 60 * 1000)).length;
+      .filter(d => d.createdAt && d.createdAt > new Date(Date.now() - 24 * 60 * 60 * 1000)).length;
 
     const isRecording = cameras.some(c => c.isRecording);
 
@@ -377,6 +405,187 @@ export class MemStorage implements IStorage {
       isRecording,
       cloudSyncStatus: 'ok',
     };
+  }
+
+  // Person profile operations (stub implementations)
+  async getPersonProfiles(): Promise<PersonProfile[]> {
+    return [];
+  }
+
+  async getPersonProfile(id: string): Promise<PersonProfile | undefined> {
+    return undefined;
+  }
+
+  async createPersonProfile(profile: InsertPersonProfile): Promise<PersonProfile> {
+    const id = randomUUID();
+    const personProfile: PersonProfile = {
+      id,
+      name: profile.name ?? null,
+      nickname: profile.nickname ?? null,
+      description: profile.description,
+      physicalCharacteristics: profile.physicalCharacteristics ?? null,
+      recognitionMetadata: profile.recognitionMetadata ?? null,
+      isKnown: profile.isKnown ?? false,
+      trustLevel: profile.trustLevel ?? 0,
+      lastSeenAt: profile.lastSeenAt ?? null,
+      totalDetections: profile.totalDetections ?? 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return personProfile;
+  }
+
+  async updatePersonProfile(id: string, updates: Partial<InsertPersonProfile>): Promise<PersonProfile | undefined> {
+    return undefined;
+  }
+
+  async deletePersonProfile(id: string): Promise<boolean> {
+    return false;
+  }
+
+  async findSimilarPersons(description: string, physicalCharacteristics: any): Promise<PersonProfile[]> {
+    return [];
+  }
+
+  // Animal profile operations (stub implementations)
+  async getAnimalProfiles(): Promise<AnimalProfile[]> {
+    return [];
+  }
+
+  async getAnimalProfile(id: string): Promise<AnimalProfile | undefined> {
+    return undefined;
+  }
+
+  async createAnimalProfile(profile: InsertAnimalProfile): Promise<AnimalProfile> {
+    const id = randomUUID();
+    const animalProfile: AnimalProfile = {
+      id,
+      name: profile.name ?? null,
+      species: profile.species,
+      breed: profile.breed ?? null,
+      description: profile.description,
+      physicalCharacteristics: profile.physicalCharacteristics ?? null,
+      recognitionMetadata: profile.recognitionMetadata ?? null,
+      isKnown: profile.isKnown ?? false,
+      animalType: profile.animalType ?? 'unknown',
+      lastSeenAt: profile.lastSeenAt ?? null,
+      totalDetections: profile.totalDetections ?? 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return animalProfile;
+  }
+
+  async updateAnimalProfile(id: string, updates: Partial<InsertAnimalProfile>): Promise<AnimalProfile | undefined> {
+    return undefined;
+  }
+
+  async deleteAnimalProfile(id: string): Promise<boolean> {
+    return false;
+  }
+
+  async findSimilarAnimals(description: string, species: string): Promise<AnimalProfile[]> {
+    return [];
+  }
+
+  // Vehicle operations (stub implementations)
+  async getVehicles(): Promise<Vehicle[]> {
+    return [];
+  }
+
+  async getVehicle(id: string): Promise<Vehicle | undefined> {
+    return undefined;
+  }
+
+  async createVehicle(vehicle: InsertVehicle): Promise<Vehicle> {
+    const id = randomUUID();
+    const vehicleRecord: Vehicle = {
+      id,
+      personId: vehicle.personId ?? null,
+      make: vehicle.make ?? null,
+      model: vehicle.model ?? null,
+      year: vehicle.year ?? null,
+      color: vehicle.color ?? null,
+      licensePlate: vehicle.licensePlate ?? null,
+      vehicleType: vehicle.vehicleType,
+      description: vehicle.description,
+      recognitionMetadata: vehicle.recognitionMetadata ?? null,
+      isKnown: vehicle.isKnown ?? false,
+      lastSeenAt: vehicle.lastSeenAt ?? null,
+      totalDetections: vehicle.totalDetections ?? 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return vehicleRecord;
+  }
+
+  async updateVehicle(id: string, updates: Partial<InsertVehicle>): Promise<Vehicle | undefined> {
+    return undefined;
+  }
+
+  async deleteVehicle(id: string): Promise<boolean> {
+    return false;
+  }
+
+  async getVehiclesByPerson(personId: string): Promise<Vehicle[]> {
+    return [];
+  }
+
+  // Recognition event operations (stub implementations)
+  async getRecognitionEvents(cameraId?: string): Promise<RecognitionEvent[]> {
+    return [];
+  }
+
+  async getRecentRecognitionEvents(limit?: number): Promise<RecognitionEvent[]> {
+    return [];
+  }
+
+  async createRecognitionEvent(event: InsertRecognitionEvent): Promise<RecognitionEvent> {
+    const id = randomUUID();
+    const recognitionEvent: RecognitionEvent = {
+      id,
+      detectionId: event.detectionId,
+      cameraId: event.cameraId,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      confidence: event.confidence,
+      matchingMethod: event.matchingMethod,
+      isNewDetection: event.isNewDetection ?? true,
+      behaviorNotes: event.behaviorNotes ?? null,
+      createdAt: new Date(),
+    };
+    return recognitionEvent;
+  }
+
+  // Daily summary operations (stub implementations)
+  async getDailySummaries(limit?: number): Promise<DailySummary[]> {
+    return [];
+  }
+
+  async getDailySummary(date: Date): Promise<DailySummary | undefined> {
+    return undefined;
+  }
+
+  async createDailySummary(summary: InsertDailySummary): Promise<DailySummary> {
+    const id = randomUUID();
+    const dailySummary: DailySummary = {
+      id,
+      date: summary.date,
+      summary: summary.summary,
+      totalDetections: summary.totalDetections ?? 0,
+      knownPeople: summary.knownPeople ?? 0,
+      unknownPeople: summary.unknownPeople ?? 0,
+      animals: summary.animals ?? 0,
+      vehicles: summary.vehicles ?? 0,
+      notableEvents: summary.notableEvents ?? null,
+      cameraActivity: summary.cameraActivity ?? null,
+      generatedAt: new Date(),
+    };
+    return dailySummary;
+  }
+
+  async getLatestDailySummary(): Promise<DailySummary | undefined> {
+    return undefined;
   }
 }
 

@@ -205,7 +205,7 @@ export default function CameraSettingsModal({ isOpen, onClose }: CameraSettingsM
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="detectPeople"
-                  checked={form.watch('detectPeople')}
+                  checked={!!form.watch('detectPeople')}
                   onCheckedChange={(checked) => form.setValue('detectPeople', !!checked)}
                   data-testid="checkbox-detect-people"
                 />
@@ -215,7 +215,7 @@ export default function CameraSettingsModal({ isOpen, onClose }: CameraSettingsM
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="detectPets"
-                  checked={form.watch('detectPets')}
+                  checked={!!form.watch('detectPets')}
                   onCheckedChange={(checked) => form.setValue('detectPets', !!checked)}
                   data-testid="checkbox-detect-pets"
                 />
@@ -225,7 +225,7 @@ export default function CameraSettingsModal({ isOpen, onClose }: CameraSettingsM
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="detectVehicles"
-                  checked={form.watch('detectVehicles')}
+                  checked={!!form.watch('detectVehicles')}
                   onCheckedChange={(checked) => form.setValue('detectVehicles', !!checked)}
                   data-testid="checkbox-detect-vehicles"
                 />

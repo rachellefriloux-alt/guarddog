@@ -2,8 +2,17 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { storage } from "./storage";
 import { cameraService } from "./services/camera-service";
+import { streamService } from "./services/stream-service";
+import { fileStorageService } from "./services/file-storage-service";
+import { googleDriveService } from "./services/google-drive-service";
+import { recognitionService } from "./services/recognition-service";
+import { dailySummaryService } from "./services/daily-summary-service";
+import { ringAuthService } from "./services/ring-auth-service";
+import { eseeCloudService } from "./services/esee-cloud-service";
 import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 
 const upload = multer({ 
@@ -72,7 +81,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: 'camera_added', camera });
       res.status(201).json(camera);
     } catch (error) {
-      res.status(400).json({ message: "Invalid camera data", error: error.message });
+      res.status(400).json({ 
+        message: "Invalid camera data", 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
     }
   });
 
@@ -88,7 +100,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: 'camera_updated', camera });
       res.json(camera);
     } catch (error) {
-      res.status(400).json({ message: "Invalid update data", error: error.message });
+      res.status(400).json({ 
+        message: "Invalid update data", 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
     }
   });
 
@@ -99,10 +114,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Camera not found" });
       }
 
+      // Stop stream if active
+      await streamService.stopStream(req.params.id);
+
       broadcast({ type: 'camera_deleted', cameraId: req.params.id });
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ message: "Failed to delete camera" });
+    }
+  });
+
+  // Camera streaming routes
+  app.post("/api/cameras/:id/start-stream", async (req, res) => {
+    try {
+      const camera = await storage.getCamera(req.params.id);
+      if (!camera) {
+        return res.status(404).json({ message: "Camera not found" });
+      }
+
+      const streamInfo = await streamService.startStream(camera);
+      if (!streamInfo) {
+        return res.status(500).json({ message: "Failed to start stream" });
+      }
+
+      broadcast({ type: 'stream_started', cameraId: camera.id, streamInfo });
+      res.json(streamInfo);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to start stream" });
+    }
+  });
+
+  app.post("/api/cameras/:id/stop-stream", async (req, res) => {
+    try {
+      await streamService.stopStream(req.params.id);
+      broadcast({ type: 'stream_stopped', cameraId: req.params.id });
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: "Failed to stop stream" });
+    }
+  });
+
+  app.get("/api/cameras/:id/stream-status", async (req, res) => {
+    try {
+      const isActive = streamService.isStreamActive(req.params.id);
+      const streamUrl = streamService.getStreamUrl(req.params.id);
+      const hlsUrl = streamService.getHLSUrl(req.params.id);
+
+      res.json({
+        isActive,
+        streamUrl,
+        hlsUrl
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get stream status" });
+    }
+  });
+
+  // Stream serving routes
+  app.get("/api/stream/:cameraId/hls/:filename", async (req, res) => {
+    try {
+      const { cameraId, filename } = req.params;
+      const filePath = path.join(process.cwd(), 'recordings', cameraId, filename);
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ message: "Stream file not found" });
+      }
+
+      // Set appropriate headers for HLS
+      if (filename.endsWith('.m3u8')) {
+        res.set('Content-Type', 'application/vnd.apple.mpegurl');
+        res.set('Cache-Control', 'no-cache');
+      } else if (filename.endsWith('.ts')) {
+        res.set('Content-Type', 'video/mp2t');
+      }
+
+      res.sendFile(filePath);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to serve stream file" });
+    }
+  });
+
+  // Recording control routes
+  app.post("/api/cameras/:id/start-recording", async (req, res) => {
+    try {
+      const recordingPath = await streamService.startRecording(req.params.id);
+      if (!recordingPath) {
+        return res.status(500).json({ message: "Failed to start recording" });
+      }
+
+      broadcast({ type: 'recording_started', cameraId: req.params.id });
+      res.json({ message: "Recording started", path: recordingPath });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to start recording" });
+    }
+  });
+
+  app.post("/api/cameras/:id/stop-recording", async (req, res) => {
+    try {
+      await streamService.stopRecording(req.params.id);
+      broadcast({ type: 'recording_stopped', cameraId: req.params.id });
+      res.json({ message: "Recording stopped" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to stop recording" });
+    }
+  });
+
+  // File download routes
+  app.get("/api/recordings/:cameraId/:filename/download", async (req, res) => {
+    try {
+      const { cameraId, filename } = req.params;
+      const filePath = await fileStorageService.getRecordingPath(cameraId, filename);
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ message: "Recording not found" });
+      }
+
+      res.download(filePath, filename);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to download recording" });
     }
   });
 
@@ -193,20 +322,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      const fileData = {
-        filename: `${Date.now()}_${req.file.originalname}`,
-        originalName: req.file.originalname,
-        mimeType: req.file.mimetype,
-        fileSize: req.file.size / (1024 * 1024), // Convert to MB
-      };
-
-      const validatedData = insertCloudFileSchema.parse(fileData);
-      const cloudFile = await storage.createCloudFile(validatedData);
+      // Use the file storage service to save the uploaded file
+      const cloudFile = await fileStorageService.saveUploadedFile(req.file);
 
       broadcast({ type: 'file_uploaded', file: cloudFile });
       res.status(201).json(cloudFile);
     } catch (error) {
-      res.status(400).json({ message: "Failed to upload file", error: error.message });
+      res.status(400).json({ 
+        message: "Failed to upload file", 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
     }
   });
 
@@ -231,6 +356,325 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(stats);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch system stats" });
+    }
+  });
+
+  // Ring authentication routes
+  app.get("/api/ring/status", async (req, res) => {
+    try {
+      const status = ringAuthService.getConnectionStatus();
+      res.json(status);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get Ring status" });
+    }
+  });
+
+  app.post("/api/ring/auth", async (req, res) => {
+    try {
+      const { email, password, twoFactorCode } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+
+      const result = await ringAuthService.authenticate(email, password, twoFactorCode);
+      
+      if (result.success) {
+        broadcast({ type: 'ring_connected' });
+        res.json({ success: true, message: "Ring account connected successfully" });
+      } else {
+        res.status(400).json({ 
+          message: result.error,
+          requiresTwoFactor: result.requiresTwoFactor 
+        });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Ring authentication failed" });
+    }
+  });
+
+  app.post("/api/ring/disconnect", async (req, res) => {
+    try {
+      await ringAuthService.disconnect();
+      broadcast({ type: 'ring_disconnected' });
+      res.json({ message: "Ring account disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect Ring account" });
+    }
+  });
+
+  app.get("/api/ring/devices", async (req, res) => {
+    try {
+      const devices = await ringAuthService.getDevices();
+      res.json(devices);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get Ring devices" });
+    }
+  });
+
+  app.get("/api/ring/devices/:deviceId/snapshot", async (req, res) => {
+    try {
+      const snapshot = await ringAuthService.getSnapshot(req.params.deviceId);
+      
+      if (snapshot) {
+        res.set('Content-Type', 'image/jpeg');
+        res.send(snapshot);
+      } else {
+        res.status(404).json({ message: "Snapshot not available" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get snapshot" });
+    }
+  });
+
+  // ESEE Cloud authentication routes
+  app.get("/api/esee-cloud/status", async (req, res) => {
+    try {
+      const status = eseeCloudService.getConnectionStatus();
+      res.json(status);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get ESEE Cloud status" });
+    }
+  });
+
+  app.post("/api/esee-cloud/auth", async (req, res) => {
+    try {
+      const { username, password, serverUrl } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password are required" });
+      }
+
+      const result = await eseeCloudService.authenticate(username, password, serverUrl);
+      
+      if (result.success) {
+        broadcast({ type: 'esee_cloud_connected' });
+        res.json({ success: true, message: "ESEE Cloud connected successfully" });
+      } else {
+        res.status(400).json({ message: result.error });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "ESEE Cloud authentication failed" });
+    }
+  });
+
+  app.post("/api/esee-cloud/disconnect", async (req, res) => {
+    try {
+      await eseeCloudService.disconnect();
+      broadcast({ type: 'esee_cloud_disconnected' });
+      res.json({ message: "ESEE Cloud disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect ESEE Cloud" });
+    }
+  });
+
+  app.get("/api/esee-cloud/devices", async (req, res) => {
+    try {
+      const devices = await eseeCloudService.getDevices();
+      res.json(devices);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get ESEE Cloud devices" });
+    }
+  });
+
+  app.get("/api/esee-cloud/devices/:deviceId/snapshot", async (req, res) => {
+    try {
+      const channelId = parseInt(req.query.channel as string) || 0;
+      const snapshot = await eseeCloudService.getDeviceSnapshot(req.params.deviceId, channelId);
+      
+      if (snapshot) {
+        res.set('Content-Type', 'image/jpeg');
+        res.send(snapshot);
+      } else {
+        res.status(404).json({ message: "Snapshot not available" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get snapshot" });
+    }
+  });
+
+  // Google Drive authentication routes
+  app.get("/api/google-drive/auth-url", async (req, res) => {
+    try {
+      const authUrl = googleDriveService.getAuthUrl();
+      res.json({ authUrl });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get auth URL" });
+    }
+  });
+
+  app.post("/api/google-drive/auth", async (req, res) => {
+    try {
+      const { code } = req.body;
+      const refreshToken = await googleDriveService.handleAuthCallback(code);
+      
+      if (refreshToken) {
+        res.json({ success: true, message: "Google Drive connected successfully" });
+      } else {
+        res.status(400).json({ message: "Failed to authenticate with Google Drive" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Authentication error" });
+    }
+  });
+
+  app.post("/api/google-drive/disconnect", async (req, res) => {
+    try {
+      // Note: Google Drive service doesn't have a disconnect method yet
+      // This would clear stored tokens
+      broadcast({ type: 'google_drive_disconnected' });
+      res.json({ message: "Google Drive disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect Google Drive" });
+    }
+  });
+
+  app.get("/api/google-drive/storage", async (req, res) => {
+    try {
+      const usage = await googleDriveService.getStorageUsage();
+      res.json(usage);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get storage usage" });
+    }
+  });
+
+  app.get("/api/google-drive/files", async (req, res) => {
+    try {
+      const { cameraId } = req.query;
+      const files = await googleDriveService.listFiles(cameraId as string);
+      res.json(files);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to list files" });
+    }
+  });
+
+  app.delete("/api/google-drive/files/:fileId", async (req, res) => {
+    try {
+      const success = await googleDriveService.deleteFile(req.params.fileId);
+      if (success) {
+        res.json({ message: "File deleted successfully" });
+      } else {
+        res.status(404).json({ message: "File not found or deletion failed" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete file" });
+    }
+  });
+
+  // AI Recognition routes
+  app.get("/api/recognition/stats", async (req, res) => {
+    try {
+      const stats = await recognitionService.getRecognitionStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get recognition stats" });
+    }
+  });
+
+  app.get("/api/recognition/people", async (req, res) => {
+    try {
+      const people = await storage.getPersonProfiles();
+      res.json(people);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get people" });
+    }
+  });
+
+  app.get("/api/recognition/animals", async (req, res) => {
+    try {
+      const animals = await storage.getAnimalProfiles();
+      res.json(animals);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get animals" });
+    }
+  });
+
+  app.get("/api/recognition/vehicles", async (req, res) => {
+    try {
+      const vehicles = await storage.getVehicles();
+      res.json(vehicles);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get vehicles" });
+    }
+  });
+
+  app.post("/api/recognition/people/:id/mark-known", async (req, res) => {
+    try {
+      const { name, trustLevel } = req.body;
+      const success = await recognitionService.markPersonAsKnown(req.params.id, name, trustLevel);
+      
+      if (success) {
+        broadcast({ type: 'person_marked_known', personId: req.params.id, name });
+        res.json({ message: "Person marked as known" });
+      } else {
+        res.status(404).json({ message: "Person not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark person as known" });
+    }
+  });
+
+  app.post("/api/recognition/animals/:id/mark-known", async (req, res) => {
+    try {
+      const { name, isPet } = req.body;
+      const success = await recognitionService.markAnimalAsKnown(req.params.id, name, isPet);
+      
+      if (success) {
+        broadcast({ type: 'animal_marked_known', animalId: req.params.id, name });
+        res.json({ message: "Animal marked as known" });
+      } else {
+        res.status(404).json({ message: "Animal not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark animal as known" });
+    }
+  });
+
+  // Daily Summary routes
+  app.get("/api/daily-summary", async (req, res) => {
+    try {
+      const { date } = req.query;
+      const targetDate = date ? new Date(date as string) : new Date();
+      const summary = await dailySummaryService.generateDailySummary(targetDate);
+      
+      if (summary) {
+        res.json(summary);
+      } else {
+        res.status(404).json({ message: "No data available for this date" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to generate daily summary" });
+    }
+  });
+
+  app.get("/api/weekly-summary", async (req, res) => {
+    try {
+      const summary = await dailySummaryService.getWeeklySummary();
+      if (summary) {
+        res.json(summary);
+      } else {
+        res.status(404).json({ message: "No weekly data available" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get weekly summary" });
+    }
+  });
+
+  app.get("/api/recognition/learning-progress", async (req, res) => {
+    try {
+      const progress = await dailySummaryService.getRecognitionLearningProgress();
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get learning progress" });
+    }
+  });
+
+  app.get("/api/recognition/events", async (req, res) => {
+    try {
+      const events = await storage.getRecognitionEvents();
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get recognition events" });
     }
   });
 
