@@ -1,4 +1,4 @@
-import { Plus, Moon, Sun, User } from 'lucide-react';
+import { Plus, Moon, Sun, User, Settings } from 'lucide-react';
 import { useTheme } from '@/hooks/use-theme';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -7,9 +7,10 @@ interface HeaderProps {
   layout: '2x2' | '3x3' | '4x4';
   onLayoutChange: (layout: '2x2' | '3x3' | '4x4') => void;
   onAddCamera: () => void;
+  onOpenAccountSettings: () => void;
 }
 
-export default function Header({ layout, onLayoutChange, onAddCamera }: HeaderProps) {
+export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAccountSettings }: HeaderProps) {
   const { isDark, toggleTheme } = useTheme();
 
   const layoutOptions: Array<'2x2' | '3x3' | '4x4'> = ['2x2', '3x3', '4x4'];
@@ -50,6 +51,16 @@ export default function Header({ layout, onLayoutChange, onAddCamera }: HeaderPr
           >
             <Plus className="mr-2" size={16} />
             Add Camera
+          </Button>
+
+          {/* Account Settings Button */}
+          <Button 
+            variant="outline" 
+            onClick={onOpenAccountSettings}
+            data-testid="button-account-settings"
+          >
+            <Settings className="mr-2" size={16} />
+            Accounts
           </Button>
 
           {/* Dark Mode Toggle */}

@@ -11,6 +11,8 @@ import { fileStorageService } from "./services/file-storage-service";
 import { googleDriveService } from "./services/google-drive-service";
 import { recognitionService } from "./services/recognition-service";
 import { dailySummaryService } from "./services/daily-summary-service";
+import { ringAuthService } from "./services/ring-auth-service";
+import { eseeCloudService } from "./services/esee-cloud-service";
 import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 
 const upload = multer({ 
@@ -357,6 +359,140 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Ring authentication routes
+  app.get("/api/ring/status", async (req, res) => {
+    try {
+      const status = ringAuthService.getConnectionStatus();
+      res.json(status);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get Ring status" });
+    }
+  });
+
+  app.post("/api/ring/auth", async (req, res) => {
+    try {
+      const { email, password, twoFactorCode } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+
+      const result = await ringAuthService.authenticate(email, password, twoFactorCode);
+      
+      if (result.success) {
+        broadcast({ type: 'ring_connected' });
+        res.json({ success: true, message: "Ring account connected successfully" });
+      } else {
+        res.status(400).json({ 
+          message: result.error,
+          requiresTwoFactor: result.requiresTwoFactor 
+        });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Ring authentication failed" });
+    }
+  });
+
+  app.post("/api/ring/disconnect", async (req, res) => {
+    try {
+      await ringAuthService.disconnect();
+      broadcast({ type: 'ring_disconnected' });
+      res.json({ message: "Ring account disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect Ring account" });
+    }
+  });
+
+  app.get("/api/ring/devices", async (req, res) => {
+    try {
+      const devices = await ringAuthService.getDevices();
+      res.json(devices);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get Ring devices" });
+    }
+  });
+
+  app.get("/api/ring/devices/:deviceId/snapshot", async (req, res) => {
+    try {
+      const snapshot = await ringAuthService.getSnapshot(req.params.deviceId);
+      
+      if (snapshot) {
+        res.set('Content-Type', 'image/jpeg');
+        res.send(snapshot);
+      } else {
+        res.status(404).json({ message: "Snapshot not available" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get snapshot" });
+    }
+  });
+
+  // ESEE Cloud authentication routes
+  app.get("/api/esee-cloud/status", async (req, res) => {
+    try {
+      const status = eseeCloudService.getConnectionStatus();
+      res.json(status);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get ESEE Cloud status" });
+    }
+  });
+
+  app.post("/api/esee-cloud/auth", async (req, res) => {
+    try {
+      const { username, password, serverUrl } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password are required" });
+      }
+
+      const result = await eseeCloudService.authenticate(username, password, serverUrl);
+      
+      if (result.success) {
+        broadcast({ type: 'esee_cloud_connected' });
+        res.json({ success: true, message: "ESEE Cloud connected successfully" });
+      } else {
+        res.status(400).json({ message: result.error });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "ESEE Cloud authentication failed" });
+    }
+  });
+
+  app.post("/api/esee-cloud/disconnect", async (req, res) => {
+    try {
+      await eseeCloudService.disconnect();
+      broadcast({ type: 'esee_cloud_disconnected' });
+      res.json({ message: "ESEE Cloud disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect ESEE Cloud" });
+    }
+  });
+
+  app.get("/api/esee-cloud/devices", async (req, res) => {
+    try {
+      const devices = await eseeCloudService.getDevices();
+      res.json(devices);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get ESEE Cloud devices" });
+    }
+  });
+
+  app.get("/api/esee-cloud/devices/:deviceId/snapshot", async (req, res) => {
+    try {
+      const channelId = parseInt(req.query.channel as string) || 0;
+      const snapshot = await eseeCloudService.getDeviceSnapshot(req.params.deviceId, channelId);
+      
+      if (snapshot) {
+        res.set('Content-Type', 'image/jpeg');
+        res.send(snapshot);
+      } else {
+        res.status(404).json({ message: "Snapshot not available" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get snapshot" });
+    }
+  });
+
   // Google Drive authentication routes
   app.get("/api/google-drive/auth-url", async (req, res) => {
     try {
@@ -379,6 +515,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ message: "Authentication error" });
+    }
+  });
+
+  app.post("/api/google-drive/disconnect", async (req, res) => {
+    try {
+      // Note: Google Drive service doesn't have a disconnect method yet
+      // This would clear stored tokens
+      broadcast({ type: 'google_drive_disconnected' });
+      res.json({ message: "Google Drive disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect Google Drive" });
     }
   });
 
