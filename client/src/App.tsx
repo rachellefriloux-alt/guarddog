@@ -4,6 +4,12 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/dashboard";
+import Cameras from "@/pages/cameras";
+import Recordings from "@/pages/recordings";
+import CloudStorage from "@/pages/cloud-storage";
+import AIDetection from "@/pages/ai-detection";
+import Alerts from "@/pages/alerts";
+import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { LoginScreen } from "@/components/login-screen";
@@ -13,6 +19,12 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/cameras" component={Cameras} />
+      <Route path="/recordings" component={Recordings} />
+      <Route path="/cloud-storage" component={CloudStorage} />
+      <Route path="/ai-detection" component={AIDetection} />
+      <Route path="/alerts" component={Alerts} />
+      <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
   );
