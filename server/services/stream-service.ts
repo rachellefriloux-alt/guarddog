@@ -271,15 +271,15 @@ export class StreamService {
 
 export const streamService = new StreamService();
 
-// Cleanup on process exit
-process.on('SIGINT', async () => {
-  console.log('Cleaning up streams...');
-  await streamService.cleanup();
-  process.exit(0);
-});
+// Cleanup on process exit (temporarily disabled for debugging)
+// process.on('SIGINT', async () => {
+//   console.log('Cleaning up streams...');
+//   await streamService.cleanup();
+//   process.exit(0);
+// });
 
-process.on('SIGTERM', async () => {
-  console.log('Cleaning up streams...');
-  await streamService.cleanup();
-  process.exit(0);
-});
+// process.on('SIGTERM', async () => {
+//   console.log('Cleaning up streams...');
+//   await streamService.cleanup();
+//   process.exit(0);
+// });
