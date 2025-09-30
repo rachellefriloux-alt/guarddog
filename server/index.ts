@@ -72,8 +72,7 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || '5000', 10);
   server.listen({
     port,
-    host: "0.0.0.0",
-    reusePort: true,
+    host: "localhost",
   }, () => {
     log(`🛡️  GuardDog Surveillance System serving on port ${port}`);
     log('🎥 Real camera streaming enabled');
