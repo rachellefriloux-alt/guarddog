@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Maximize, Download, Settings, Wifi, Eye, StopCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { type Camera } from '@shared/schema';
 import { cn } from '@/lib/utils';
 import { apiRequest } from '@/lib/queryClient';
+import Hls from 'hls.js';
 
 interface CameraFeedProps {
   camera: Camera;
@@ -22,12 +23,63 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
   const [streamInfo, setStreamInfo] = useState<StreamInfo>({ isActive: false });
   const [isLoading, setIsLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
-  useEffect(() => {
-    checkStreamStatus();
-  }, [camera.id]);
+  const cleanupHls = useCallback(() => {
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
 
-  const checkStreamStatus = async () => {
+    if (videoRef.current) {
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+      videoRef.current.style.display = '';
+    }
+  }, []);
+
+  const resolveHlsUrl = (url: string) => {
+    if (!url) return '';
+    return url.startsWith('http') ? url : `${window.location.origin}${url}`;
+  };
+
+  const setupVideoStream = useCallback((rawUrl: string) => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !rawUrl) {
+      return;
+    }
+
+    const hlsUrl = resolveHlsUrl(rawUrl);
+
+    if (Hls.isSupported()) {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+      }
+
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        console.error(`HLS error for camera ${camera.id}:`, data);
+      });
+
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(videoEl);
+      hlsRef.current = hls;
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = hlsUrl;
+      videoEl.load();
+    } else {
+      videoEl.src = hlsUrl;
+      videoEl.load();
+    }
+  }, [camera.id, resolveHlsUrl]);
+
+  const checkStreamStatus = useCallback(async (options: { autoStartIfInactive?: boolean } = {}) => {
+    const { autoStartIfInactive = false } = options;
+
     try {
       const response = await fetch(`/api/cameras/${camera.id}/stream-status`);
       if (response.ok) {
@@ -37,21 +89,22 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
         // If stream is active, set up video element
         if (status.isActive && status.hlsUrl && videoRef.current) {
           setupVideoStream(status.hlsUrl);
+        } else if (!status.isActive && autoStartIfInactive && camera.type === 'ring') {
+          await startStream();
         }
       }
     } catch (error) {
       console.error('Error checking stream status:', error);
     }
-  };
+  }, [camera.id, camera.type, setupVideoStream]);
 
-  const setupVideoStream = (hlsUrl: string) => {
-    if (videoRef.current) {
-      // For HLS streams, we would typically use hls.js
-      // For now, we'll try to use the native video element
-      videoRef.current.src = hlsUrl;
-      videoRef.current.load();
-    }
-  };
+  useEffect(() => {
+    void checkStreamStatus({ autoStartIfInactive: camera.type === 'ring' });
+
+    return () => {
+      cleanupHls();
+    };
+  }, [camera.id, camera.type, checkStreamStatus, cleanupHls]);
 
   const startStream = async () => {
     setIsLoading(true);
@@ -61,8 +114,11 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
         const streamData = await response.json();
         setStreamInfo({ isActive: true, ...streamData });
         
-        if (streamData.hlsUrl && videoRef.current) {
+        if (streamData.hlsUrl) {
           setupVideoStream(streamData.hlsUrl);
+          window.setTimeout(() => {
+            void checkStreamStatus({ autoStartIfInactive: false });
+          }, 1500);
         }
       }
     } catch (error) {
@@ -77,10 +133,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
     try {
       await apiRequest('POST', `/api/cameras/${camera.id}/stop-stream`);
       setStreamInfo({ isActive: false });
-      
-      if (videoRef.current) {
-        videoRef.current.src = '';
-      }
+      cleanupHls();
     } catch (error) {
       console.error('Error stopping stream:', error);
     } finally {
@@ -149,9 +202,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
               onError={() => {
                 console.error('Video stream error');
                 // Fallback to placeholder on error
-                if (videoRef.current) {
-                  videoRef.current.style.display = 'none';
-                }
+                cleanupHls();
               }}
             />
           ) : (

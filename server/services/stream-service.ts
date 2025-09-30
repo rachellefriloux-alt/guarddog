@@ -1,21 +1,22 @@
 import { spawn, ChildProcess } from 'child_process';
-import { createWriteStream, createReadStream, existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, rmSync } from 'fs';
 import path from 'path';
+import ffmpegPath from 'ffmpeg-static';
 import { storage } from '../storage';
 import { type Camera, type InsertRecording } from '@shared/schema';
 
 interface StreamInstance {
   process: ChildProcess;
-  port: number;
   cameraId: string;
   isRecording: boolean;
+  hlsUrl: string;
+  playlistPath: string;
   recordingPath?: string;
 }
 
 export class StreamService {
   private streams: Map<string, StreamInstance> = new Map();
   private recordingsDir = path.join(process.cwd(), 'recordings');
-  private baseStreamPort = 9000;
 
   constructor() {
     // Ensure recordings directory exists
@@ -30,29 +31,36 @@ export class StreamService {
       if (this.streams.has(camera.id)) {
         const existing = this.streams.get(camera.id)!;
         return {
-          streamUrl: `http://localhost:${existing.port}/stream`,
-          hlsUrl: `http://localhost:${existing.port}/hls/${camera.id}.m3u8`
+          streamUrl: '',
+          hlsUrl: existing.hlsUrl
         };
       }
 
-      const streamPort = this.baseStreamPort + this.streams.size;
       const outputDir = path.join(this.recordingsDir, camera.id);
       
-      if (!existsSync(outputDir)) {
-        mkdirSync(outputDir, { recursive: true });
+      if (existsSync(outputDir)) {
+        rmSync(outputDir, { recursive: true, force: true });
       }
+      mkdirSync(outputDir, { recursive: true });
+
+      const playlistFilename = `${camera.id}.m3u8`;
+      const playlistPath = path.join(outputDir, playlistFilename);
+      const segmentTemplate = path.join(outputDir, `${camera.id}_%03d.ts`);
+
+      const normalizedPlaylistPath = this.normalizeForFfmpeg(playlistPath);
+      const normalizedSegmentTemplate = this.normalizeForFfmpeg(segmentTemplate);
 
       let ffmpegProcess: ChildProcess;
 
       if (camera.type === 'ring') {
         // For Ring cameras, we'll use the Ring API to get the stream URL
-        ffmpegProcess = await this.setupRingStream(camera, streamPort, outputDir);
+        ffmpegProcess = await this.setupRingStream(camera, normalizedPlaylistPath, normalizedSegmentTemplate);
       } else if (camera.type === 'esee') {
         // For ESEE cameras, use RTSP stream
-        ffmpegProcess = await this.setupESEEStream(camera, streamPort, outputDir);
+        ffmpegProcess = await this.setupESEEStream(camera, normalizedPlaylistPath, normalizedSegmentTemplate);
       } else {
         // Generic IP camera with RTSP
-        ffmpegProcess = await this.setupGenericStream(camera, streamPort, outputDir);
+        ffmpegProcess = await this.setupGenericStream(camera, normalizedPlaylistPath, normalizedSegmentTemplate);
       }
 
       if (!ffmpegProcess) {
@@ -62,9 +70,10 @@ export class StreamService {
 
       const streamInstance: StreamInstance = {
         process: ffmpegProcess,
-        port: streamPort,
         cameraId: camera.id,
         isRecording: false,
+        hlsUrl: `/api/stream/${camera.id}/hls/${playlistFilename}`,
+        playlistPath,
       };
 
       this.streams.set(camera.id, streamInstance);
@@ -80,9 +89,17 @@ export class StreamService {
         this.streams.delete(camera.id);
       });
 
+      ffmpegProcess.stderr?.on('data', (data) => {
+        console.error(`FFmpeg stderr for camera ${camera.id}: ${data.toString()}`);
+      });
+
+      ffmpegProcess.stdout?.on('data', (data) => {
+        console.log(`FFmpeg stdout for camera ${camera.id}: ${data.toString()}`);
+      });
+
       return {
-        streamUrl: `http://localhost:${streamPort}/stream`,
-        hlsUrl: `/api/stream/${camera.id}/hls/${camera.id}.m3u8`
+        streamUrl: '',
+        hlsUrl: streamInstance.hlsUrl
       };
 
     } catch (error) {
@@ -91,12 +108,14 @@ export class StreamService {
     }
   }
 
-  private async setupESEEStream(camera: Camera, port: number, outputDir: string): Promise<ChildProcess> {
+  private async setupESEEStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
     const rtspUrl = this.buildRTSPUrl(camera);
-    const hlsPath = path.join(outputDir, 'stream.m3u8');
 
     // FFmpeg command for ESEE RTSP stream
     const ffmpegArgs = [
+      '-loglevel', 'error',
+      '-nostdin',
+      '-y',
       '-i', rtspUrl,
       '-c:v', 'libx264',
       '-c:a', 'aac',
@@ -105,28 +124,27 @@ export class StreamService {
       '-f', 'hls',
       '-hls_time', '2',
       '-hls_list_size', '10',
-      '-hls_flags', 'delete_segments',
+      '-hls_flags', 'delete_segments+append_list',
       '-hls_allow_cache', '0',
-      hlsPath,
-      // Also output to HTTP stream
-      '-f', 'mjpeg',
-      `http://localhost:${port}/stream`
+      '-hls_segment_filename', segmentTemplate,
+      playlistPath,
     ];
 
-    return spawn('ffmpeg', ffmpegArgs, {
+    return spawn(this.getFfmpegExecutable(), ffmpegArgs, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
   }
 
-  private async setupRingStream(camera: Camera, port: number, outputDir: string): Promise<ChildProcess> {
+  private async setupRingStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
     // For Ring cameras, we would need to integrate with Ring API
     // For now, we'll use a placeholder that attempts to connect to Ring's stream
     // In production, you'd use the ring-client-api package properly
-    
-    const hlsPath = path.join(outputDir, 'stream.m3u8');
 
     // Placeholder FFmpeg command (would be replaced with actual Ring stream URL)
     const ffmpegArgs = [
+      '-loglevel', 'error',
+      '-nostdin',
+      '-y',
       '-f', 'lavfi',
       '-i', `testsrc=size=${camera.resolution || '1920x1080'}:rate=30`,
       '-c:v', 'libx264',
@@ -135,20 +153,23 @@ export class StreamService {
       '-f', 'hls',
       '-hls_time', '2',
       '-hls_list_size', '10',
-      '-hls_flags', 'delete_segments',
-      hlsPath
+      '-hls_flags', 'delete_segments+append_list',
+      '-hls_segment_filename', segmentTemplate,
+      playlistPath
     ];
 
-    return spawn('ffmpeg', ffmpegArgs, {
+    return spawn(this.getFfmpegExecutable(), ffmpegArgs, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
   }
 
-  private async setupGenericStream(camera: Camera, port: number, outputDir: string): Promise<ChildProcess> {
+  private async setupGenericStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
     const streamUrl = camera.streamUrl || this.buildRTSPUrl(camera);
-    const hlsPath = path.join(outputDir, 'stream.m3u8');
 
     const ffmpegArgs = [
+      '-loglevel', 'error',
+      '-nostdin',
+      '-y',
       '-i', streamUrl,
       '-c:v', 'libx264',
       '-c:a', 'aac',
@@ -157,12 +178,13 @@ export class StreamService {
       '-f', 'hls',
       '-hls_time', '2',
       '-hls_list_size', '10',
-      '-hls_flags', 'delete_segments',
+      '-hls_flags', 'delete_segments+append_list',
       '-hls_allow_cache', '0',
-      hlsPath
+      '-hls_segment_filename', segmentTemplate,
+      playlistPath
     ];
 
-    return spawn('ffmpeg', ffmpegArgs, {
+    return spawn(this.getFfmpegExecutable(), ffmpegArgs, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
   }
@@ -244,12 +266,12 @@ export class StreamService {
 
   getStreamUrl(cameraId: string): string | null {
     const stream = this.streams.get(cameraId);
-    return stream ? `http://localhost:${stream.port}/stream` : null;
+    return stream ? '' : null;
   }
 
   getHLSUrl(cameraId: string): string | null {
     const stream = this.streams.get(cameraId);
-    return stream ? `/api/stream/${cameraId}/hls/${cameraId}.m3u8` : null;
+    return stream ? stream.hlsUrl : null;
   }
 
   isStreamActive(cameraId: string): boolean {
@@ -266,6 +288,14 @@ export class StreamService {
     for (const cameraId of cameraIds) {
       await this.stopStream(cameraId);
     }
+  }
+
+  private getFfmpegExecutable(): string {
+    return ffmpegPath ?? 'ffmpeg';
+  }
+
+  private normalizeForFfmpeg(filePath: string): string {
+    return filePath.replace(/\\/g, '/');
   }
 }
 
