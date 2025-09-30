@@ -71,6 +71,9 @@ uploads/
 temp/
 tmp/
 
+# Storage directory (contains sensitive credentials)
+storage/
+
 # Playwright test results
 test-results/
 playwright-report/
