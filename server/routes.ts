@@ -371,13 +371,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/ring/auth", async (req, res) => {
     try {
-      const { email, password, twoFactorCode } = req.body;
+      const { refreshToken } = req.body;
       
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email and password are required" });
+      if (!refreshToken) {
+        return res.status(400).json({ 
+          message: "Refresh token is required. Ring no longer supports password authentication. Please use the Ring CLI tool to generate a refresh token: npx -p ring-client-api ring-auth-cli",
+          requiresRefreshToken: true
+        });
       }
 
-      const result = await ringAuthService.authenticate(email, password, twoFactorCode);
+      const result = await ringAuthService.authenticate(refreshToken);
       
       if (result.success) {
         broadcast({ type: 'ring_connected' });
@@ -385,7 +388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         res.status(400).json({ 
           message: result.error,
-          requiresTwoFactor: result.requiresTwoFactor 
+          requiresRefreshToken: result.requiresRefreshToken 
         });
       }
     } catch (error) {

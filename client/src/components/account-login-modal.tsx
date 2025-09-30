@@ -36,9 +36,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
 
   // Ring states
   const [ringCredentials, setRingCredentials] = useState({
-    email: '',
-    password: '',
-    twoFactorCode: ''
+    refreshToken: ''
   });
 
   // ESEE Cloud states
@@ -93,7 +91,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
 
       const response = await apiRequest('GET', '/api/google-drive/auth-url');
       const data = await response.json();
-      
+
       if (data.authUrl) {
         // Open Google auth in popup
         const popup = window.open(
@@ -129,14 +127,14 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
       setConnectionStatus(prev => ({ ...prev, ring: 'connecting' }));
 
       const response = await apiRequest('POST', '/api/ring/auth', ringCredentials);
-      
+
       if (response.ok) {
         setConnectionStatus(prev => ({ ...prev, ring: 'connected' }));
         toast({
           title: "Ring Connected",
           description: "Successfully connected to Ring account",
         });
-        setRingCredentials({ email: '', password: '', twoFactorCode: '' });
+        setRingCredentials({ refreshToken: '' });
       } else {
         const error = await response.json();
         throw new Error(error.message);
@@ -159,7 +157,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
       setConnectionStatus(prev => ({ ...prev, eseeCloud: 'connecting' }));
 
       const response = await apiRequest('POST', '/api/esee-cloud/auth', eseeCredentials);
-      
+
       if (response.ok) {
         setConnectionStatus(prev => ({ ...prev, eseeCloud: 'connected' }));
         toast({
@@ -186,7 +184,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
   const handleDisconnectService = async (service: keyof ConnectionStatus) => {
     try {
       setLoading(true);
-      
+
       const endpoints = {
         googleDrive: '/api/google-drive/disconnect',
         ring: '/api/ring/disconnect',
@@ -195,7 +193,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
 
       await apiRequest('POST', endpoints[service]);
       setConnectionStatus(prev => ({ ...prev, [service]: 'disconnected' }));
-      
+
       toast({
         title: "Disconnected",
         description: `Successfully disconnected from ${service.replace(/([A-Z])/g, ' $1').trim()}`,
@@ -277,14 +275,14 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                         <span>{Math.round(googleDriveUsage.used / (1024 * 1024 * 1024) * 100) / 100} GB / {Math.round(googleDriveUsage.total / (1024 * 1024 * 1024))} GB</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-guardian-blue h-2 rounded-full" 
+                        <div
+                          className="bg-guardian-blue h-2 rounded-full"
                           style={{ width: `${(googleDriveUsage.used / googleDriveUsage.total) * 100}%` }}
                         ></div>
                       </div>
                     </div>
-                    <Button 
-                      onClick={() => handleDisconnectService('googleDrive')} 
+                    <Button
+                      onClick={() => handleDisconnectService('googleDrive')}
                       variant="outline"
                       disabled={loading}
                     >
@@ -296,8 +294,8 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                     <p className="text-sm text-muted-foreground">
                       Connect your Google Drive account to automatically backup recordings and snapshots to the cloud.
                     </p>
-                    <Button 
-                      onClick={handleGoogleDriveLogin} 
+                    <Button
+                      onClick={handleGoogleDriveLogin}
                       disabled={loading || connectionStatus.googleDrive === 'connecting'}
                       className="w-full"
                     >
@@ -334,8 +332,8 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                 {connectionStatus.ring === 'connected' ? (
                   <div className="space-y-3">
                     <p className="text-sm text-success">✓ Ring account is connected and ready</p>
-                    <Button 
-                      onClick={() => handleDisconnectService('ring')} 
+                    <Button
+                      onClick={() => handleDisconnectService('ring')}
                       variant="outline"
                       disabled={loading}
                     >
@@ -344,39 +342,28 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="ring-email">Ring Account Email</Label>
-                      <Input
-                        id="ring-email"
-                        type="email"
-                        placeholder="your-email@example.com"
-                        value={ringCredentials.email}
-                        onChange={(e) => setRingCredentials(prev => ({ ...prev, email: e.target.value }))}
-                      />
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+                      <p className="font-medium text-blue-800 mb-2">🔑 Ring Refresh Token Required</p>
+                      <p className="text-blue-700 mb-2">Ring no longer supports password authentication. You need to generate a refresh token using the Ring CLI tool:</p>
+                      <code className="bg-blue-100 px-2 py-1 rounded text-blue-800 font-mono text-xs">
+                        npx -p ring-client-api ring-auth-cli
+                      </code>
+                      <p className="text-blue-700 mt-2">Follow the prompts to enter your Ring credentials and 2FA code, then copy the refresh token below.</p>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="ring-password">Password</Label>
+                      <Label htmlFor="ring-refresh-token">Ring Refresh Token</Label>
                       <Input
-                        id="ring-password"
-                        type="password"
-                        placeholder="Your Ring password"
-                        value={ringCredentials.password}
-                        onChange={(e) => setRingCredentials(prev => ({ ...prev, password: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="ring-2fa">Two-Factor Code (if enabled)</Label>
-                      <Input
-                        id="ring-2fa"
+                        id="ring-refresh-token"
                         type="text"
-                        placeholder="123456"
-                        value={ringCredentials.twoFactorCode}
-                        onChange={(e) => setRingCredentials(prev => ({ ...prev, twoFactorCode: e.target.value }))}
+                        placeholder="Paste your Ring refresh token here..."
+                        value={ringCredentials.refreshToken}
+                        onChange={(e) => setRingCredentials(prev => ({ ...prev, refreshToken: e.target.value }))}
+                        className="font-mono text-xs"
                       />
                     </div>
-                    <Button 
-                      onClick={handleRingLogin} 
-                      disabled={loading || !ringCredentials.email || !ringCredentials.password}
+                    <Button
+                      onClick={handleRingLogin}
+                      disabled={loading || !ringCredentials.refreshToken}
                       className="w-full"
                     >
                       {connectionStatus.ring === 'connecting' ? (
@@ -412,8 +399,8 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                 {connectionStatus.eseeCloud === 'connected' ? (
                   <div className="space-y-3">
                     <p className="text-sm text-success">✓ ESEE Cloud account is connected and ready</p>
-                    <Button 
-                      onClick={() => handleDisconnectService('eseeCloud')} 
+                    <Button
+                      onClick={() => handleDisconnectService('eseeCloud')}
                       variant="outline"
                       disabled={loading}
                     >
@@ -452,8 +439,8 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                         onChange={(e) => setEseeCredentials(prev => ({ ...prev, serverUrl: e.target.value }))}
                       />
                     </div>
-                    <Button 
-                      onClick={handleEseeCloudLogin} 
+                    <Button
+                      onClick={handleEseeCloudLogin}
                       disabled={loading || !eseeCredentials.username || !eseeCredentials.password}
                       className="w-full"
                     >
