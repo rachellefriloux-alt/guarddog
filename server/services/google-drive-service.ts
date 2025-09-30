@@ -8,6 +8,7 @@ export class GoogleDriveService {
   private drive: any;
   private auth: OAuth2Client;
   private folderId: string | null = null;
+  private serviceAccountToken: string | null = null;
 
   constructor() {
     this.auth = new google.auth.OAuth2(
@@ -16,6 +17,7 @@ export class GoogleDriveService {
       process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/auth/google/callback'
     );
 
+    this.serviceAccountToken = process.env.GOOGLE_SERVICE_ACCOUNT_TOKEN || null;
     this.drive = google.drive({ version: 'v3', auth: this.auth });
   }
 
@@ -27,12 +29,26 @@ export class GoogleDriveService {
 
       // Create or find GuardDog folder
       await this.ensureGuardDogFolder();
-      console.log('Google Drive service initialized');
+      
+      if (this.serviceAccountToken) {
+        console.log('Google Drive service initialized with service account support');
+      } else {
+        console.log('Google Drive service initialized with OAuth2 only');
+      }
+      
       return true;
     } catch (error) {
       console.error('Failed to initialize Google Drive service:', error);
       return false;
     }
+  }
+
+  hasServiceAccountAccess(): boolean {
+    return !!this.serviceAccountToken;
+  }
+
+  getServiceAccountToken(): string | null {
+    return this.serviceAccountToken;
   }
 
   private async ensureGuardDogFolder(): Promise<void> {
