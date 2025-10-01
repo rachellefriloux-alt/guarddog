@@ -613,60 +613,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ESEE Cloud authentication routes
-  app.get("/api/esee-cloud/status", async (req, res) => {
+  // ESEE Camera management routes
+  app.get("/api/esee-cameras/status", async (req, res) => {
     try {
       const status = eseeCloudService.getConnectionStatus();
       res.json(status);
     } catch (error) {
-      res.status(500).json({ message: "Failed to get ESEE Cloud status" });
+      res.status(500).json({ message: "Failed to get ESEE camera status" });
     }
   });
 
-  app.post("/api/esee-cloud/auth", async (req, res) => {
+  app.post("/api/esee-cameras/add", async (req, res) => {
     try {
-      const { username, password, serverUrl } = req.body;
+      const { ip, port, username, password, name } = req.body;
       
-      if (!username || !password) {
-        return res.status(400).json({ message: "Username and password are required" });
+      if (!ip || !username || !password) {
+        return res.status(400).json({ message: "IP address, username, and password are required" });
       }
 
-      const result = await eseeCloudService.authenticate(username, password, serverUrl);
+      const camera = await eseeCloudService.addCamera(ip, port || 80, username, password, name);
       
-      if (result.success) {
-        broadcast({ type: 'esee_cloud_connected' });
-        res.json({ success: true, message: "ESEE Cloud connected successfully" });
+      broadcast({ type: 'esee_camera_added', camera });
+      res.json({ success: true, message: "ESEE camera added successfully", camera });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to add ESEE camera", error: (error as Error).message });
+    }
+  });
+
+  app.delete("/api/esee-cameras/:cameraId", async (req, res) => {
+    try {
+      const success = await eseeCloudService.removeCamera(req.params.cameraId);
+      
+      if (success) {
+        broadcast({ type: 'esee_camera_removed', cameraId: req.params.cameraId });
+        res.json({ message: "ESEE camera removed successfully" });
       } else {
-        res.status(400).json({ message: result.error });
+        res.status(404).json({ message: "Camera not found" });
       }
     } catch (error) {
-      res.status(500).json({ message: "ESEE Cloud authentication failed" });
+      res.status(500).json({ message: "Failed to remove ESEE camera" });
     }
   });
 
-  app.post("/api/esee-cloud/disconnect", async (req, res) => {
+  app.get("/api/esee-cameras", async (req, res) => {
     try {
-      await eseeCloudService.disconnect();
-      broadcast({ type: 'esee_cloud_disconnected' });
-      res.json({ message: "ESEE Cloud disconnected successfully" });
+      const cameras = await eseeCloudService.getCameras();
+      res.json(cameras);
     } catch (error) {
-      res.status(500).json({ message: "Failed to disconnect ESEE Cloud" });
+      res.status(500).json({ message: "Failed to get ESEE cameras" });
     }
   });
 
-  app.get("/api/esee-cloud/devices", async (req, res) => {
+  app.get("/api/esee-cameras/:cameraId", async (req, res) => {
     try {
-      const devices = await eseeCloudService.getDevices();
-      res.json(devices);
+      const camera = await eseeCloudService.getCameraById(req.params.cameraId);
+      
+      if (camera) {
+        res.json(camera);
+      } else {
+        res.status(404).json({ message: "Camera not found" });
+      }
     } catch (error) {
-      res.status(500).json({ message: "Failed to get ESEE Cloud devices" });
+      res.status(500).json({ message: "Failed to get ESEE camera" });
     }
   });
 
-  app.get("/api/esee-cloud/devices/:deviceId/snapshot", async (req, res) => {
+  app.get("/api/esee-cameras/:cameraId/snapshot", async (req, res) => {
     try {
-      const channelId = parseInt(req.query.channel as string) || 0;
-      const snapshot = await eseeCloudService.getDeviceSnapshot(req.params.deviceId, channelId);
+      const channelIndex = parseInt(req.query.channel as string) || 0;
+      const snapshot = await eseeCloudService.getSnapshot(req.params.cameraId, channelIndex);
       
       if (snapshot) {
         res.set('Content-Type', 'image/jpeg');
@@ -676,6 +691,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ message: "Failed to get snapshot" });
+    }
+  });
+
+  app.post("/api/esee-cameras/test", async (req, res) => {
+    try {
+      const results = await eseeCloudService.testAllCameras();
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to test cameras" });
     }
   });
 
