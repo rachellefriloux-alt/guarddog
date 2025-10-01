@@ -6,6 +6,60 @@ import { setupVite, serveStatic, log } from "./vite";
 import { recognitionService } from "./services/recognition-service";
 import { dailySummaryService } from "./services/daily-summary-service";
 
+// Environment validation
+function validateEnvironment() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  // Critical checks for production
+  if (isProduction) {
+    if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === "change-me-to-a-secure-random-string-in-production") {
+      errors.push("SESSION_SECRET must be set to a secure random string in production. Generate one with: openssl rand -base64 32");
+    }
+    
+    if (!process.env.GOOGLE_AUTH_CLIENT_ID || process.env.GOOGLE_AUTH_CLIENT_ID.includes("<") || process.env.GOOGLE_AUTH_CLIENT_ID.includes(">")) {
+      warnings.push("GOOGLE_AUTH_CLIENT_ID is not configured. Google authentication will not work.");
+    }
+    
+    if (!process.env.VITE_GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID.includes("<") || process.env.VITE_GOOGLE_CLIENT_ID.includes(">")) {
+      warnings.push("VITE_GOOGLE_CLIENT_ID is not configured. Frontend Google authentication will not work.");
+    }
+  }
+
+  // Non-critical warnings
+  if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-openai-api-key-here") {
+    warnings.push("OPENAI_API_KEY is not configured. AI detection features will not work.");
+  }
+
+  if (!process.env.DATABASE_URL) {
+    warnings.push("DATABASE_URL is not configured. Using in-memory storage (data will be lost on restart).");
+  }
+
+  // Log results
+  if (errors.length > 0) {
+    console.error("\n❌ CRITICAL CONFIGURATION ERRORS:");
+    errors.forEach(err => console.error(`  - ${err}`));
+    console.error("\nPlease fix these errors before running in production.\n");
+    if (isProduction) {
+      process.exit(1);
+    }
+  }
+
+  if (warnings.length > 0) {
+    console.warn("\n⚠️  CONFIGURATION WARNINGS:");
+    warnings.forEach(warn => console.warn(`  - ${warn}`));
+    console.warn("\nSome features may not work correctly. See .env.example for configuration options.\n");
+  }
+
+  if (errors.length === 0 && warnings.length === 0) {
+    console.log("✅ Environment configuration validated");
+  }
+}
+
+// Validate environment on startup
+validateEnvironment();
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));

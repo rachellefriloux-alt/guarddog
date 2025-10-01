@@ -71,6 +71,11 @@ uploads/
 temp/
 tmp/
 
+# Storage directory (contains sensitive credentials)
+storage/
+# Allow README.md in storage for documentation
+!storage/README.md
+
 # Playwright test results
 test-results/
 playwright-report/
