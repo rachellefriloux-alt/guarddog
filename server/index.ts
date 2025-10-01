@@ -1,3 +1,7 @@
+import { config } from "dotenv";
+// Load environment variables from .env file
+config();
+
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import createMemoryStore from "memorystore";
