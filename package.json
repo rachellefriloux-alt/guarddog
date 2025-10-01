@@ -10,7 +10,8 @@
     "check": "tsc",
     "test": "vitest run",
     "db:push": "drizzle-kit push",
-    "validate-env": "node scripts/validate-env.js"
+    "validate-env": "node scripts/validate-env.js",
+    "setup-db": "node scripts/setup-database.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
