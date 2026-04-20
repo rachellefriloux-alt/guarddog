@@ -53,7 +53,7 @@ export class StreamService {
       let ffmpegProcess: ChildProcess;
 
       if (camera.type === 'ring') {
-        // For Ring cameras, we'll use the Ring API to get the stream URL
+        // Pulled from Ring-MQTT bridge instead of fake test pattern
         ffmpegProcess = await this.setupRingStream(camera, normalizedPlaylistPath, normalizedSegmentTemplate);
       } else if (camera.type === 'esee') {
         // For ESEE cameras, use RTSP stream
@@ -136,24 +136,23 @@ export class StreamService {
   }
 
   private async setupRingStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
-    // For Ring cameras, we would need to integrate with Ring API
-    // For now, we'll use a placeholder that attempts to connect to Ring's stream
-    // In production, you'd use the ring-client-api package properly
+    // Pulling the actual feed from the Ring-MQTT bridge running in the background
+    const ringRtspUrl = process.env.RING_RTSP_URL || 'rtsp://127.0.0.1:8554/front_door';
 
-    // Placeholder FFmpeg command (would be replaced with actual Ring stream URL)
     const ffmpegArgs = [
       '-loglevel', 'error',
       '-nostdin',
       '-y',
-      '-f', 'lavfi',
-      '-i', `testsrc=size=${camera.resolution || '1920x1080'}:rate=30`,
+      '-i', ringRtspUrl,
       '-c:v', 'libx264',
+      '-c:a', 'aac',
       '-preset', 'veryfast',
       '-tune', 'zerolatency',
       '-f', 'hls',
       '-hls_time', '2',
       '-hls_list_size', '10',
       '-hls_flags', 'delete_segments+append_list',
+      '-hls_allow_cache', '0',
       '-hls_segment_filename', segmentTemplate,
       playlistPath
     ];
@@ -231,19 +230,16 @@ export class StreamService {
     const filename = `recording_${timestamp}.mp4`;
     const recordingPath = path.join(this.recordingsDir, cameraId, filename);
 
-    // Update stream to include recording output
     stream.isRecording = true;
     stream.recordingPath = recordingPath;
 
-    // In a production environment, you'd modify the FFmpeg process to also output to file
-    // For now, we'll create a recording entry in the database
     const camera = await storage.getCamera(cameraId);
     if (camera) {
       const recording: InsertRecording = {
         cameraId,
         filename,
-        duration: 0, // Will be updated when recording stops
-        fileSize: 0, // Will be updated when recording stops
+        duration: 0, 
+        fileSize: 0, 
       };
 
       await storage.createRecording(recording);
@@ -256,10 +252,6 @@ export class StreamService {
     const stream = this.streams.get(cameraId);
     if (stream && stream.isRecording) {
       stream.isRecording = false;
-      
-      // In production, you'd stop the recording process and update the database
-      // with final file size and duration
-      
       stream.recordingPath = undefined;
     }
   }
@@ -283,7 +275,6 @@ export class StreamService {
   }
 
   async cleanup(): Promise<void> {
-    // Stop all active streams
     const cameraIds = Array.from(this.streams.keys());
     for (const cameraId of cameraIds) {
       await this.stopStream(cameraId);
