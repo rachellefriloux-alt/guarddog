@@ -12,9 +12,9 @@
     "db:push": "drizzle-kit push",
     "validate-env": "node scripts/validate-env.js",
     "setup-db": "node scripts/setup-database.js",
-    "electron:compile": "esbuild electron/main.ts electron/preload.ts --platform=node --bundle --format=cjs --outdir=dist-electron --external:electron",
+    "electron:compile": "esbuild electron/main.ts electron/preload.ts --platform=node --bundle --format=cjs --outdir=dist-electron --out-extension:.js=.cjs --external:electron",
     "electron:dev": "npm run electron:compile && concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5000 && electron .\"",
-    "electron:build": "npm run build && npm run electron:compile && electron-builder"
+    "electron:build": "npm run build && npm run electron:compile && electron-builder --publish never"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -161,7 +161,11 @@
         "AppImage",
         "deb"
       ],
-      "category": "Utility"
-    }
-  }
+      "category": "Utility",
+      "maintainer": "GuardDog Team <noreply@guarddog.local>"
+    },
+    "npmRebuild": false
+  },
+  "description": "GuardDog desktop surveillance dashboard",
+  "author": "GuardDog Team <noreply@guarddog.local>"
 }
