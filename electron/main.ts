@@ -1,11 +1,33 @@
 import { app, BrowserWindow } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SERVER_URL = "http://127.0.0.1:5000";
+const DEFAULT_SERVER_TIMEOUT_MS = 30000;
 let mainWindow: BrowserWindow | null = null;
 
-async function waitForServer(url: string, timeoutMs = 60000): Promise<void> {
+function getServerTimeoutMs(): number {
+  const rawTimeout = Number(process.env.GUARDDOG_SERVER_TIMEOUT_MS);
+  return Number.isFinite(rawTimeout) && rawTimeout > 0
+    ? rawTimeout
+    : DEFAULT_SERVER_TIMEOUT_MS;
+}
+
+function resolveServerEntryPath(): string {
+  const configuredPath = process.env.GUARDDOG_SERVER_ENTRY;
+  const serverEntryPath = configuredPath
+    ? path.resolve(app.getAppPath(), configuredPath)
+    : path.join(app.getAppPath(), "dist", "index.js");
+
+  if (!fs.existsSync(serverEntryPath)) {
+    throw new Error(`Server entry not found at ${serverEntryPath}`);
+  }
+
+  return serverEntryPath;
+}
+
+async function waitForServer(url: string, timeoutMs = getServerTimeoutMs()): Promise<void> {
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
@@ -32,7 +54,7 @@ async function startServerIfPackaged(): Promise<void> {
   process.env.NODE_ENV = "production";
   process.env.PORT = process.env.PORT || "5000";
 
-  const serverEntryPath = path.join(app.getAppPath(), "dist", "index.js");
+  const serverEntryPath = resolveServerEntryPath();
   await import(pathToFileURL(serverEntryPath).href);
 }
 
