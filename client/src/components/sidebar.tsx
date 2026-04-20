@@ -1,15 +1,18 @@
 import { Shield, Grid, Video, PlayCircle, Cloud, Brain, Bell, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useLocation } from 'wouter';
 
 export default function Sidebar() {
+  const [location, setLocation] = useLocation();
+  
   const menuItems = [
-    { icon: Grid, label: 'Dashboard', isActive: true, count: null },
-    { icon: Video, label: 'Cameras', isActive: false, count: 6 },
-    { icon: PlayCircle, label: 'Recordings', isActive: false, count: null },
-    { icon: Cloud, label: 'Cloud Storage', isActive: false, count: null },
-    { icon: Brain, label: 'AI Detection', isActive: false, count: null },
-    { icon: Bell, label: 'Alerts', isActive: false, count: 3 },
-    { icon: Settings, label: 'Settings', isActive: false, count: null },
+    { icon: Grid, label: 'Dashboard', path: '/', count: null },
+    { icon: Video, label: 'Cameras', path: '/cameras', count: 6 },
+    { icon: PlayCircle, label: 'Recordings', path: '/recordings', count: null },
+    { icon: Cloud, label: 'Cloud Storage', path: '/cloud-storage', count: null },
+    { icon: Brain, label: 'AI Detection', path: '/ai-detection', count: null },
+    { icon: Bell, label: 'Alerts', path: '/alerts', count: 3 },
+    { icon: Settings, label: 'Settings', path: '/settings', count: null },
   ];
 
   return (
@@ -31,13 +34,15 @@ export default function Sidebar() {
       <nav className="flex-1 p-4 space-y-2">
         {menuItems.map((item) => {
           const Icon = item.icon;
+          const isActive = location === item.path;
           return (
             <button
               key={item.label}
+              onClick={() => setLocation(item.path)}
               data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
               className={cn(
                 "w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors text-left",
-                item.isActive
+                isActive
                   ? "bg-primary text-primary-foreground"
                   : "hover:bg-accent hover:text-accent-foreground"
               )}

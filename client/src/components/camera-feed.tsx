@@ -1,20 +1,161 @@
-import { useState } from 'react';
-import { Play, Maximize, Download, Settings, Wifi, Eye } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Play, Maximize, Download, Settings, Wifi, Eye, StopCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { type Camera } from '@shared/schema';
 import { cn } from '@/lib/utils';
+import { apiRequest } from '@/lib/queryClient';
+import Hls from 'hls.js';
 
 interface CameraFeedProps {
   camera: Camera;
 }
 
+interface StreamInfo {
+  isActive: boolean;
+  streamUrl?: string;
+  hlsUrl?: string;
+}
+
 export default function CameraFeed({ camera }: CameraFeedProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [streamInfo, setStreamInfo] = useState<StreamInfo>({ isActive: false });
+  const [isLoading, setIsLoading] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
-  // Simulate camera feed images based on location
-  const getSimulatedFeedImage = (location: string) => {
+  const cleanupHls = useCallback(() => {
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+      videoRef.current.style.display = '';
+    }
+  }, []);
+
+  const resolveHlsUrl = useCallback((url: string) => {
+    if (!url) return '';
+    return url.startsWith('http') ? url : `${window.location.origin}${url}`;
+  }, []);
+
+  const setupVideoStream = useCallback((rawUrl: string) => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !rawUrl) {
+      return;
+    }
+
+    const hlsUrl = resolveHlsUrl(rawUrl);
+
+    if (Hls.isSupported()) {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+      }
+
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        console.error(`HLS error for camera ${camera.id}:`, data);
+      });
+
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(videoEl);
+      hlsRef.current = hls;
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = hlsUrl;
+      videoEl.load();
+    } else {
+      videoEl.src = hlsUrl;
+      videoEl.load();
+    }
+  }, [camera.id, resolveHlsUrl]);
+
+  const checkStreamStatus = useCallback(async (options: { autoStartIfInactive?: boolean } = {}) => {
+    const { autoStartIfInactive = false } = options;
+
+    try {
+      const response = await fetch(`/api/cameras/${camera.id}/stream-status`);
+      if (response.ok) {
+        const status = await response.json();
+        setStreamInfo(status);
+
+        // If stream is active, set up video element
+        if (status.isActive && status.hlsUrl && videoRef.current) {
+          setupVideoStream(status.hlsUrl);
+        } else if (!status.isActive && autoStartIfInactive && camera.type === 'ring') {
+          await startStream();
+        }
+      }
+    } catch (error) {
+      console.error('Error checking stream status:', error);
+    }
+  }, [camera.id, camera.type, setupVideoStream]);
+
+  useEffect(() => {
+    void checkStreamStatus({ autoStartIfInactive: camera.type === 'ring' });
+
+    return () => {
+      cleanupHls();
+    };
+  }, [camera.id, camera.type, checkStreamStatus, cleanupHls]);
+
+  const startStream = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await apiRequest('POST', `/api/cameras/${camera.id}/start-stream`);
+      if (response.ok) {
+        const streamData = await response.json();
+        setStreamInfo({ isActive: true, ...streamData });
+
+        if (streamData.hlsUrl) {
+          setupVideoStream(streamData.hlsUrl);
+        }
+      }
+    } catch (error) {
+      console.error('Error starting stream:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [camera.id, setupVideoStream]);
+
+  const stopStream = async () => {
+    setIsLoading(true);
+    try {
+      await apiRequest('POST', `/api/cameras/${camera.id}/stop-stream`);
+      setStreamInfo({ isActive: false });
+      cleanupHls();
+    } catch (error) {
+      console.error('Error stopping stream:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      await apiRequest('POST', `/api/cameras/${camera.id}/start-recording`);
+    } catch (error) {
+      console.error('Error starting recording:', error);
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      await apiRequest('POST', `/api/cameras/${camera.id}/stop-recording`);
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+    }
+  };
+
+  // Fallback image for when stream is not active
+  const getPlaceholderImage = (location: string) => {
     const imageMap = {
       front_door: "https://images.unsplash.com/photo-1570129477492-45c003edd2be?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=450",
       backyard: "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=450",
@@ -36,10 +177,10 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
   };
 
   const detection = getRecentDetection();
-  const wifiStrengthColor = camera.wifiStrength > 90 ? 'text-success' : camera.wifiStrength > 70 ? 'text-yellow-500' : 'text-alert';
+  const wifiStrengthColor = (camera.wifiStrength ?? 0) > 90 ? 'text-success' : (camera.wifiStrength ?? 0) > 70 ? 'text-yellow-500' : 'text-alert';
 
   return (
-    <Card 
+    <Card
       className="overflow-hidden group hover:shadow-lg transition-shadow"
       data-testid={`camera-card-${camera.id}`}
       onMouseEnter={() => setIsHovered(true)}
@@ -47,13 +188,29 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
     >
       <div className="relative">
         <div className="video-feed aspect-video relative">
-          <img 
-            src={getSimulatedFeedImage(camera.location)}
-            alt={`${camera.name} camera feed`}
-            className="w-full h-full object-cover"
-            data-testid={`camera-image-${camera.id}`}
-          />
-          
+          {streamInfo.isActive ? (
+            <video
+              ref={videoRef}
+              className="w-full h-full object-cover"
+              autoPlay
+              muted
+              playsInline
+              data-testid={`camera-video-${camera.id}`}
+              onError={() => {
+                console.error('Video stream error');
+                // Fallback to placeholder on error
+                cleanupHls();
+              }}
+            />
+          ) : (
+            <img
+              src={getPlaceholderImage(camera.location)}
+              alt={`${camera.name} camera feed`}
+              className="w-full h-full object-cover"
+              data-testid={`camera-image-${camera.id}`}
+            />
+          )}
+
           {/* Recording indicator */}
           <div className="absolute top-4 left-4 flex items-center space-x-2">
             <div className={cn(
@@ -65,16 +222,16 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
             </span>
           </div>
 
-          {/* Live indicator */}
+          {/* Live/Stream indicator */}
           <div className="absolute top-4 right-4">
-            <Badge 
+            <Badge
               className={cn(
                 "text-white font-medium",
-                camera.isOnline ? "bg-success" : "bg-muted"
+                streamInfo.isActive ? "bg-success" : camera.isOnline ? "bg-yellow-500" : "bg-muted"
               )}
               data-testid={`camera-status-${camera.id}`}
             >
-              {camera.isOnline ? 'LIVE' : 'OFFLINE'}
+              {streamInfo.isActive ? 'LIVE' : camera.isOnline ? 'READY' : 'OFFLINE'}
             </Badge>
           </div>
 
@@ -96,25 +253,64 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
             isHovered ? "opacity-100" : "opacity-0"
           )}>
             <div className="flex space-x-3">
-              <Button 
-                size="icon" 
-                variant="ghost" 
-                className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
-                data-testid={`button-play-${camera.id}`}
-              >
-                <Play size={20} />
-              </Button>
-              <Button 
-                size="icon" 
-                variant="ghost" 
+              {!streamInfo.isActive ? (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
+                  onClick={startStream}
+                  disabled={isLoading}
+                  data-testid={`button-play-${camera.id}`}
+                >
+                  {isLoading ? '...' : <Play size={20} />}
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
+                  onClick={stopStream}
+                  disabled={isLoading}
+                  data-testid={`button-stop-${camera.id}`}
+                >
+                  {isLoading ? '...' : <StopCircle size={20} />}
+                </Button>
+              )}
+
+              {camera.isRecording ? (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="w-12 h-12 bg-red-500/70 hover:bg-red-600/70 text-white"
+                  onClick={stopRecording}
+                  data-testid={`button-stop-recording-${camera.id}`}
+                >
+                  <StopCircle size={20} />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
+                  onClick={startRecording}
+                  disabled={!streamInfo.isActive}
+                  data-testid={`button-record-${camera.id}`}
+                >
+                  <Eye size={20} />
+                </Button>
+              )}
+
+              <Button
+                size="icon"
+                variant="ghost"
                 className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                 data-testid={`button-fullscreen-${camera.id}`}
               >
                 <Maximize size={20} />
               </Button>
-              <Button 
-                size="icon" 
-                variant="ghost" 
+              <Button
+                size="icon"
+                variant="ghost"
                 className="w-12 h-12 bg-white/20 hover:bg-white/30 text-white"
                 data-testid={`button-download-${camera.id}`}
               >
@@ -124,7 +320,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
           </div>
         </div>
       </div>
-      
+
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold" data-testid={`camera-name-${camera.id}`}>
@@ -133,18 +329,18 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
           <div className="flex items-center space-x-2">
             <div className={cn(
               "w-2 h-2 rounded-full",
-              camera.isOnline ? "bg-success" : "bg-muted"
+              streamInfo.isActive ? "bg-success" : camera.isOnline ? "bg-yellow-500" : "bg-muted"
             )} />
             <span className="text-sm text-muted-foreground">
-              {camera.isOnline ? 'Online' : 'Offline'}
+              {streamInfo.isActive ? 'Streaming' : camera.isOnline ? 'Ready' : 'Offline'}
             </span>
           </div>
         </div>
-        
+
         <p className="text-sm text-muted-foreground mb-3" data-testid={`camera-details-${camera.id}`}>
           {camera.ipAddress} • {camera.type === 'ring' ? 'Ring' : 'ESEE'} {camera.resolution}
         </p>
-        
+
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center space-x-4">
             <span className="flex items-center space-x-1">
@@ -156,9 +352,9 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
               <span data-testid={`camera-wifi-${camera.id}`}>{camera.wifiStrength}%</span>
             </span>
           </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             className="text-primary hover:text-primary/80 font-medium"
             data-testid={`button-settings-${camera.id}`}
           >
