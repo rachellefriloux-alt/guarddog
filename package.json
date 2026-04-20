@@ -11,7 +11,10 @@
     "test": "vitest run",
     "db:push": "drizzle-kit push",
     "validate-env": "node scripts/validate-env.js",
-    "setup-db": "node scripts/setup-database.js"
+    "setup-db": "node scripts/setup-database.js",
+    "electron:compile": "esbuild electron/main.ts electron/preload.ts --platform=node --bundle --format=cjs --outdir=dist-electron --external:electron",
+    "electron:dev": "npm run electron:compile && concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5000 && electron .\"",
+    "electron:build": "npm run build && npm run electron:compile && electron-builder"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -110,7 +113,10 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.4",
+    "electron": "^41.2.1",
+    "electron-builder": "^26.8.1",
     "esbuild": "^0.25.0",
     "postcss": "^8.4.47",
     "supertest": "^7.0.0",
@@ -118,9 +124,44 @@
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
     "vite": "^5.4.20",
-    "vitest": "^2.1.4"
+    "vitest": "^2.1.4",
+    "wait-on": "^9.0.5"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
+  },
+  "main": "dist-electron/main.cjs",
+  "build": {
+    "appId": "com.guarddog.desktop",
+    "productName": "GuardDog",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      ".env.example"
+    ],
+    "extraMetadata": {
+      "main": "dist-electron/main.cjs"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
   }
 }
