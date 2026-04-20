@@ -1,24 +1,38 @@
 # Dependencies
 node_modules/
 client/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+client/build/
+.vite/
 
 # Environment variables
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Database
 data/
 *.db
+*.sqlite
+*.sqlite3
 
-# Uploads
+# Uploads and temporary files
 uploads/
+temp/
+tmp/
 
-# Logs
-*.log
-logs/
-
-# Build outputs
-client/build/
-dist/
+# Storage directory (contains sensitive credentials)
+storage/
+# Allow README.md in storage for documentation
+!storage/README.md
 
 # OS generated files
 .DS_Store
@@ -29,12 +43,46 @@ dist/
 ehthumbs.db
 Thumbs.db
 
-# IDE files
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Temporary files
-tmp/
-temp/
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# Playwright test results
+test-results/
+playwright-report/
+.playwright/
+
+# TypeScript cache
+*.tsbuildinfo
