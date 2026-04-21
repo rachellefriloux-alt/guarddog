@@ -136,8 +136,11 @@ export class StreamService {
   }
 
   private async setupRingStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
-    // Pulling the actual feed from the local Ring-MQTT bridge running in the background
-    const ringRtspUrl = process.env.RING_RTSP_URL || 'rtsp://127.0.0.1:8554/front_door';
+    // Pull the feed from the local Ring-MQTT bridge using the dashboard camera name
+    const baseRtspUrl = process.env.RING_RTSP_BASE_URL || 'rtsp://127.0.0.1:8554';
+    const fallbackRtspUrl = process.env.RING_RTSP_URL;
+    const ringPath = `/${this.toRingCameraPath(camera.name)}`;
+    const ringRtspUrl = fallbackRtspUrl || `${baseRtspUrl.replace(/\/+$/, '')}${ringPath}`;
 
     const ffmpegArgs = [
       '-loglevel', 'error',
@@ -160,6 +163,16 @@ export class StreamService {
     return spawn(this.getFfmpegExecutable(), ffmpegArgs, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
+  }
+
+  private toRingCameraPath(cameraName: string): string {
+    const normalized = cameraName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    return normalized || 'front_door';
   }
 
   private async setupGenericStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
