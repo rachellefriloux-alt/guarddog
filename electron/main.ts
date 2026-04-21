@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const SERVER_URL = "http://127.0.0.1:5000";
+const SERVER_URL = "http://localhost:5000";
 const DEFAULT_SERVER_TIMEOUT_MS = 30000;
 let mainWindow: BrowserWindow | null = null;
 
