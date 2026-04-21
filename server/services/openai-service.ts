@@ -1,9 +1,20 @@
 import OpenAI from "openai";
 
-// the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key"
-});
+// Default to widely-available, currently-supported models. Users can override via env.
+const VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4o-mini";
+const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
+
+const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR;
+const isConfigured = Boolean(apiKey && apiKey !== "your-openai-api-key-here");
+
+const openai: OpenAI | null = isConfigured ? new OpenAI({ apiKey: apiKey! }) : null;
+
+if (!isConfigured) {
+  console.warn(
+    "[OpenAIService] OPENAI_API_KEY is not configured. AI vision/text calls will return a disabled-mode response. " +
+    "Set OPENAI_API_KEY in your .env or use a free alternative (see README → Free / open AI options)."
+  );
+}
 
 export interface MotionDetectionResult {
   detected: boolean;
@@ -19,9 +30,18 @@ export interface MotionDetectionResult {
 
 export class OpenAIService {
   async analyzeImageForMotion(base64Image: string): Promise<MotionDetectionResult> {
+    if (!openai) {
+      return {
+        detected: false,
+        type: 'unknown',
+        confidence: 0,
+        description: 'AI analysis disabled (OPENAI_API_KEY not configured)',
+        metadata: {},
+      };
+    }
     try {
       const response = await openai.chat.completions.create({
-        model: "gpt-5",
+        model: VISION_MODEL,
         messages: [
           {
             role: "system",
@@ -91,6 +111,9 @@ export class OpenAIService {
     classification: string;
     confidence: number;
   }> {
+    if (!openai) {
+      return { type: 'unknown', classification: 'AI disabled (no API key)', confidence: 0 };
+    }
     try {
       const messages: any[] = [
         {
@@ -113,7 +136,7 @@ export class OpenAIService {
       ];
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5",
+        model: VISION_MODEL,
         messages,
         response_format: { type: "json_object" },
         max_tokens: 200,
@@ -138,12 +161,12 @@ export class OpenAIService {
 
   async analyzeImageWithPrompt(imageBase64: string, prompt: string): Promise<string> {
     try {
-      if (!process.env.OPENAI_API_KEY) {
+      if (!openai) {
         return 'OpenAI API key not configured';
       }
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: VISION_MODEL,
         messages: [
           {
             role: "user",
@@ -165,12 +188,12 @@ export class OpenAIService {
 
   async generateText(prompt: string): Promise<string> {
     try {
-      if (!process.env.OPENAI_API_KEY) {
+      if (!openai) {
         return 'OpenAI API key not configured';
       }
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4",
+        model: TEXT_MODEL,
         messages: [
           {
             role: "user",

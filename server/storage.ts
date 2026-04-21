@@ -86,9 +86,17 @@ export class MemStorage implements IStorage {
   private recordings: Map<string, Recording> = new Map();
   private detections: Map<string, Detection> = new Map();
   private cloudFiles: Map<string, CloudFile> = new Map();
+  private personProfiles: Map<string, PersonProfile> = new Map();
+  private animalProfiles: Map<string, AnimalProfile> = new Map();
+  private vehicles: Map<string, Vehicle> = new Map();
+  private recognitionEvents: Map<string, RecognitionEvent> = new Map();
+  private dailySummaries: Map<string, DailySummary> = new Map();
 
   constructor() {
-    this.initializeMockData();
+    // Seed demo data only in DEMO_MODE — keeps real deployments clean.
+    if ((process.env.DEMO_MODE || "").toLowerCase() === "true") {
+      this.initializeMockData();
+    }
   }
 
   private initializeMockData() {
@@ -407,13 +415,13 @@ export class MemStorage implements IStorage {
     };
   }
 
-  // Person profile operations (stub implementations)
+  // Person profile operations
   async getPersonProfiles(): Promise<PersonProfile[]> {
-    return [];
+    return Array.from(this.personProfiles.values());
   }
 
   async getPersonProfile(id: string): Promise<PersonProfile | undefined> {
-    return undefined;
+    return this.personProfiles.get(id);
   }
 
   async createPersonProfile(profile: InsertPersonProfile): Promise<PersonProfile> {
@@ -432,28 +440,44 @@ export class MemStorage implements IStorage {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+    this.personProfiles.set(id, personProfile);
     return personProfile;
   }
 
   async updatePersonProfile(id: string, updates: Partial<InsertPersonProfile>): Promise<PersonProfile | undefined> {
-    return undefined;
+    const existing = this.personProfiles.get(id);
+    if (!existing) return undefined;
+    const updated: PersonProfile = { ...existing, ...updates, updatedAt: new Date() };
+    this.personProfiles.set(id, updated);
+    return updated;
   }
 
   async deletePersonProfile(id: string): Promise<boolean> {
-    return false;
+    return this.personProfiles.delete(id);
   }
 
-  async findSimilarPersons(description: string, physicalCharacteristics: any): Promise<PersonProfile[]> {
-    return [];
+  async findSimilarPersons(description: string, _physicalCharacteristics: unknown): Promise<PersonProfile[]> {
+    const needle = description.toLowerCase().trim();
+    if (!needle) return [];
+    const tokens = needle.split(/\s+/).filter((t) => t.length > 2);
+    return Array.from(this.personProfiles.values())
+      .map((p) => {
+        const hay = `${p.description ?? ""} ${p.name ?? ""} ${p.nickname ?? ""}`.toLowerCase();
+        const score = tokens.reduce((acc, t) => acc + (hay.includes(t) ? 1 : 0), 0);
+        return { profile: p, score };
+      })
+      .filter((m) => m.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((m) => m.profile);
   }
 
-  // Animal profile operations (stub implementations)
+  // Animal profile operations
   async getAnimalProfiles(): Promise<AnimalProfile[]> {
-    return [];
+    return Array.from(this.animalProfiles.values());
   }
 
   async getAnimalProfile(id: string): Promise<AnimalProfile | undefined> {
-    return undefined;
+    return this.animalProfiles.get(id);
   }
 
   async createAnimalProfile(profile: InsertAnimalProfile): Promise<AnimalProfile> {
@@ -473,28 +497,39 @@ export class MemStorage implements IStorage {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+    this.animalProfiles.set(id, animalProfile);
     return animalProfile;
   }
 
   async updateAnimalProfile(id: string, updates: Partial<InsertAnimalProfile>): Promise<AnimalProfile | undefined> {
-    return undefined;
+    const existing = this.animalProfiles.get(id);
+    if (!existing) return undefined;
+    const updated: AnimalProfile = { ...existing, ...updates, updatedAt: new Date() };
+    this.animalProfiles.set(id, updated);
+    return updated;
   }
 
   async deleteAnimalProfile(id: string): Promise<boolean> {
-    return false;
+    return this.animalProfiles.delete(id);
   }
 
   async findSimilarAnimals(description: string, species: string): Promise<AnimalProfile[]> {
-    return [];
+    const needle = description.toLowerCase().trim();
+    const speciesLower = species.toLowerCase().trim();
+    return Array.from(this.animalProfiles.values()).filter((a) => {
+      const speciesMatch = !speciesLower || a.species.toLowerCase() === speciesLower;
+      const descMatch = !needle || (a.description ?? "").toLowerCase().includes(needle);
+      return speciesMatch && descMatch;
+    });
   }
 
-  // Vehicle operations (stub implementations)
+  // Vehicle operations
   async getVehicles(): Promise<Vehicle[]> {
-    return [];
+    return Array.from(this.vehicles.values());
   }
 
   async getVehicle(id: string): Promise<Vehicle | undefined> {
-    return undefined;
+    return this.vehicles.get(id);
   }
 
   async createVehicle(vehicle: InsertVehicle): Promise<Vehicle> {
@@ -516,28 +551,37 @@ export class MemStorage implements IStorage {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+    this.vehicles.set(id, vehicleRecord);
     return vehicleRecord;
   }
 
   async updateVehicle(id: string, updates: Partial<InsertVehicle>): Promise<Vehicle | undefined> {
-    return undefined;
+    const existing = this.vehicles.get(id);
+    if (!existing) return undefined;
+    const updated: Vehicle = { ...existing, ...updates, updatedAt: new Date() };
+    this.vehicles.set(id, updated);
+    return updated;
   }
 
   async deleteVehicle(id: string): Promise<boolean> {
-    return false;
+    return this.vehicles.delete(id);
   }
 
   async getVehiclesByPerson(personId: string): Promise<Vehicle[]> {
-    return [];
+    return Array.from(this.vehicles.values()).filter((v) => v.personId === personId);
   }
 
-  // Recognition event operations (stub implementations)
+  // Recognition event operations
   async getRecognitionEvents(cameraId?: string): Promise<RecognitionEvent[]> {
-    return [];
+    const events = Array.from(this.recognitionEvents.values());
+    return cameraId ? events.filter((e) => e.cameraId === cameraId) : events;
   }
 
-  async getRecentRecognitionEvents(limit?: number): Promise<RecognitionEvent[]> {
-    return [];
+  async getRecentRecognitionEvents(limit = 10): Promise<RecognitionEvent[]> {
+    return Array.from(this.recognitionEvents.values())
+      .filter((e) => e.createdAt !== null)
+      .sort((a, b) => b.createdAt!.getTime() - a.createdAt!.getTime())
+      .slice(0, limit);
   }
 
   async createRecognitionEvent(event: InsertRecognitionEvent): Promise<RecognitionEvent> {
@@ -554,16 +598,21 @@ export class MemStorage implements IStorage {
       behaviorNotes: event.behaviorNotes ?? null,
       createdAt: new Date(),
     };
+    this.recognitionEvents.set(id, recognitionEvent);
     return recognitionEvent;
   }
 
-  // Daily summary operations (stub implementations)
-  async getDailySummaries(limit?: number): Promise<DailySummary[]> {
-    return [];
+  // Daily summary operations
+  async getDailySummaries(limit = 30): Promise<DailySummary[]> {
+    return Array.from(this.dailySummaries.values())
+      .filter((s) => s.date !== null)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, limit);
   }
 
   async getDailySummary(date: Date): Promise<DailySummary | undefined> {
-    return undefined;
+    const target = this.dayKey(date);
+    return Array.from(this.dailySummaries.values()).find((s) => this.dayKey(s.date) === target);
   }
 
   async createDailySummary(summary: InsertDailySummary): Promise<DailySummary> {
@@ -581,11 +630,18 @@ export class MemStorage implements IStorage {
       cameraActivity: summary.cameraActivity ?? null,
       generatedAt: new Date(),
     };
+    this.dailySummaries.set(id, dailySummary);
     return dailySummary;
   }
 
   async getLatestDailySummary(): Promise<DailySummary | undefined> {
-    return undefined;
+    const all = await this.getDailySummaries(1);
+    return all[0];
+  }
+
+  private dayKey(d: Date | string): string {
+    const date = typeof d === "string" ? new Date(d) : d;
+    return `${date.getUTCFullYear()}-${date.getUTCMonth() + 1}-${date.getUTCDate()}`;
   }
 }
 

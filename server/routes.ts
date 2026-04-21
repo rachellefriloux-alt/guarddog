@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
+import { createServer, type Server, type IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import path from "path";
@@ -15,6 +15,18 @@ import { ringAuthService } from "./services/ring-auth-service";
 import { eseeCloudService } from "./services/esee-cloud-service";
 import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 import { googleAuthService } from "./services/google-auth-service";
+import { getActiveProvider, analyzeMotion } from "./services/ai-provider-router";
+import { localOcrService } from "./services/local-ocr-service";
+import { sessionMiddleware } from "./session";
+import { testUrl } from "./services/url-tester";
+import { discoverOnvifDevices } from "./services/onvif-discovery";
+import { cameraPresets } from "./services/camera-presets";
+import { sovereignRecorder } from "./services/sovereign-recorder";
+import { runDiagnostics } from "./services/diagnostics";
+import { auditLog } from "./services/audit-log";
+import { notificationService } from "./services/notification-service";
+import { mintShareToken, verifyShareToken } from "./services/clip-share";
+import { parseSmartRule, ruleMatches, type SmartRule } from "./services/smart-filter";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -24,10 +36,41 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // WebSocket server for real-time updates
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-  
+  // WebSocket server for real-time updates. We use noServer mode and run the
+  // session middleware against the upgrade request so only authenticated users
+  // can subscribe to motion events.
+  const wss = new WebSocketServer({ noServer: true });
+
   const connectedClients = new Set<WebSocket>();
+
+  httpServer.on("upgrade", (request: IncomingMessage, socket, head) => {
+    const url = request.url || "";
+    if (!url.startsWith("/ws")) {
+      socket.destroy();
+      return;
+    }
+
+    // Run express-session against the upgrade request to populate request.session.
+    // The session middleware only reads from req and writes to res.setHeader / cookies,
+    // neither of which apply during a WS handshake — passing a no-op response is safe
+    // and is the documented pattern for this use-case.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const noopRes = { setHeader() {}, getHeader() {}, getHeaders() { return {}; }, end() {} } as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sessionMiddleware(request as any, noopRes, () => {
+      const sessionUser = (request as unknown as { session?: { user?: unknown } })
+        .session?.user;
+      if (!sessionUser) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    });
+  });
 
   wss.on('connection', (ws) => {
     connectedClients.add(ws);
@@ -165,11 +208,234 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return next();
     }
 
+    // Public share links — the signed token IS the auth.
+    if (req.path.startsWith("/api/share/")) {
+      return next();
+    }
+
     if (req.session?.user) {
       return next();
     }
 
     return res.status(401).json({ message: "Authentication required" });
+  });
+
+  // ----- Free / local AI endpoints --------------------------------------------
+  app.get("/api/ai/status", async (_req, res) => {
+    try {
+      const provider = await getActiveProvider();
+      res.json({
+        provider,
+        ollama: {
+          host: process.env.OLLAMA_HOST || "http://localhost:11434",
+          visionModel: process.env.OLLAMA_VISION_MODEL || "llava",
+          textModel: process.env.OLLAMA_TEXT_MODEL || "llama3.2",
+        },
+        openaiConfigured: Boolean(
+          process.env.OPENAI_API_KEY &&
+            process.env.OPENAI_API_KEY !== "your-openai-api-key-here"
+        ),
+        ocrEnabled: true,
+      });
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  app.post("/api/ai/analyze", async (req, res) => {
+    try {
+      const { image } = req.body || {};
+      if (!image || typeof image !== "string") {
+        return res.status(400).json({ message: "Body must include base64 'image'" });
+      }
+      const result = await analyzeMotion(image);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  app.post("/api/ai/ocr", upload.single("image"), async (req, res) => {
+    try {
+      const buffer = req.file?.buffer;
+      if (!buffer) {
+        return res.status(400).json({ message: "Upload a single image file under 'image'" });
+      }
+      const result = await localOcrService.readImage(buffer);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ----- Camera onboarding helpers -----------------------------------------
+  // Vendor URL templates so the UI can pre-fill the stream URL field once the
+  // user picks a brand from the dropdown in the camera-add wizard.
+  app.get("/api/cameras/vendor-presets", (_req, res) => {
+    res.json({ presets: cameraPresets });
+  });
+
+  // Probe a stream URL with ffprobe so the UI can validate the camera before
+  // saving it. Returns codec / resolution / fps / bitrate plus a bandwidth
+  // advisory when the stream is too hot for typical home upload pipes.
+  app.post("/api/cameras/test-url", async (req, res) => {
+    try {
+      const { url, username, password } = req.body || {};
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ message: "Body must include a 'url' string." });
+      }
+      const result = await testUrl({ url, username, password });
+      auditLog.record({
+        event: "camera.test_url",
+        detail: `${url} → ${result.ok ? "ok" : `error: ${result.error ?? "unknown"}`}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ONVIF / WS-Discovery scan. Returns the list of cameras that responded to
+  // a UDP multicast probe. Empty arrays are normal in sandboxed / firewalled
+  // environments — the UI surfaces that gracefully.
+  app.get("/api/cameras/discover", async (req, res) => {
+    try {
+      const devices = await discoverOnvifDevices();
+      auditLog.record({
+        event: "discovery.run",
+        detail: `${devices.length} device(s) responded`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.json({ devices });
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ----- Stream health -----------------------------------------------------
+  // Drives the green/amber/red badges on the cameras page.
+  app.get("/api/streams/health", (_req, res) => {
+    res.json({ streams: sovereignRecorder.getHealth() });
+  });
+
+  // ----- go2rtc integration export ----------------------------------------
+  // Generates a ready-to-paste go2rtc.yaml snippet for every saved camera so
+  // operators can re-use the same feeds with HomeAssistant / Frigate.
+  app.get("/api/integrations/go2rtc.yaml", async (_req, res) => {
+    try {
+      const cameras = await storage.getCameras();
+      const lines: string[] = ["# Generated by GuardDog. Drop into go2rtc/config.yaml.", "streams:"];
+      for (const camera of cameras) {
+        const safeName = camera.name.replace(/[^A-Za-z0-9_-]+/g, "_") || camera.id;
+        lines.push(`  ${safeName}: ${camera.streamUrl}`);
+      }
+      res.set("Content-Type", "text/yaml; charset=utf-8");
+      res.send(lines.join("\n") + "\n");
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ----- Diagnostics -------------------------------------------------------
+  app.get("/api/diagnostics", async (req, res) => {
+    try {
+      const report = await runDiagnostics();
+      auditLog.record({
+        event: "diagnostics.run",
+        detail: `ok=${report.summary.ok} warn=${report.summary.warn} fail=${report.summary.fail}`,
+        user: req.session?.user?.email,
+      });
+      res.json(report);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ----- Audit log ---------------------------------------------------------
+  app.get("/api/audit-log", (req, res) => {
+    const limit = req.query.limit ? Math.min(500, Math.max(1, Number(req.query.limit))) : 100;
+    res.json({ entries: auditLog.list(limit) });
+  });
+
+  // ----- Notification fan-out ---------------------------------------------
+  app.get("/api/notifications/channels", (_req, res) => {
+    res.json({ channels: notificationService.getChannels() });
+  });
+
+  app.post("/api/notifications/test", async (req, res) => {
+    const title = (req.body?.title as string) || "GuardDog test notification";
+    const message = (req.body?.message as string) || "If you see this, your channels are wired up correctly.";
+    const results = await notificationService.send({ title, message, level: "info" });
+    res.json({ results });
+  });
+
+  // ----- Recording share links --------------------------------------------
+  app.post("/api/recordings/:id/share", async (req, res) => {
+    try {
+      const recording = await storage.getRecording(req.params.id);
+      if (!recording) return res.status(404).json({ message: "Recording not found" });
+      const ttlDays = req.body?.ttlDays ? Number(req.body.ttlDays) : undefined;
+      const token = mintShareToken(recording.id, ttlDays);
+      auditLog.record({
+        event: "recording.share",
+        detail: `${recording.filename} (expires ${new Date(token.expiresAt).toISOString()})`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.json(token);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  app.get("/api/share/:token", async (req, res) => {
+    const verification = verifyShareToken(req.params.token);
+    if (!verification.ok || !verification.recordingId) {
+      return res.status(403).json({ message: verification.error || "invalid token" });
+    }
+    try {
+      const recording = await storage.getRecording(verification.recordingId);
+      if (!recording) return res.status(404).json({ message: "Recording not found" });
+      const filePath = await fileStorageService.getRecordingPath(recording.cameraId, recording.filename);
+      if (!fs.existsSync(filePath)) return res.status(404).json({ message: "File not on disk" });
+      res.download(filePath, recording.filename);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ----- AI smart filters --------------------------------------------------
+  // Convert a natural-language alert description into a structured rule using
+  // the active AI provider, with a regex fallback when no provider is set up.
+  app.post("/api/ai/smart-filter/parse", async (req, res) => {
+    try {
+      const prompt = req.body?.prompt;
+      if (!prompt || typeof prompt !== "string") {
+        return res.status(400).json({ message: "Body must include a 'prompt' string." });
+      }
+      const result = await parseSmartRule(prompt);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // Test a saved rule against a hypothetical event so the UI can show users
+  // what their rule will and won't fire on.
+  app.post("/api/ai/smart-filter/test", (req, res) => {
+    try {
+      const rule: SmartRule = req.body?.rule;
+      const event = req.body?.event;
+      if (!rule || !event) {
+        return res.status(400).json({ message: "Provide both 'rule' and 'event'." });
+      }
+      res.json({ matches: ruleMatches(rule, event) });
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
   });
 
   // Camera routes
@@ -888,27 +1154,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Simulate motion detection for demo purposes
-  setInterval(async () => {
-    try {
-      const cameras = await storage.getCameras();
-      for (const camera of cameras) {
-        if (camera.isOnline && camera.aiDetectionEnabled) {
-          await cameraService.simulateMotionDetection(camera.id);
+  // Demo motion simulator. Disabled by default — only runs when DEMO_MODE=true,
+  // which is intended for screenshots / showcases when no real cameras are
+  // attached. Real detections come from analyzeCameraFeed() (cloud or local AI)
+  // or the MQTT events bridge (Frigate / ring-mqtt).
+  if ((process.env.DEMO_MODE || "").toLowerCase() === "true") {
+    console.log("⚠️  DEMO_MODE=true — generating simulated motion events every 30s");
+    setInterval(async () => {
+      try {
+        const cameras = await storage.getCameras();
+        for (const camera of cameras) {
+          if (camera.isOnline && camera.aiDetectionEnabled) {
+            await cameraService.simulateMotionDetection(camera.id);
+          }
         }
+
+        // Broadcast recent detections to connected clients
+        const recentDetections = await storage.getRecentDetections(5);
+        broadcast({ type: 'detections_update', detections: recentDetections });
+
+        // Broadcast system stats update
+        const stats = await storage.getSystemStats();
+        broadcast({ type: 'stats_update', stats });
+      } catch (error) {
+        console.error('Error in simulation interval:', error);
       }
-
-      // Broadcast recent detections to connected clients
-      const recentDetections = await storage.getRecentDetections(5);
-      broadcast({ type: 'detections_update', detections: recentDetections });
-
-      // Broadcast system stats update
-      const stats = await storage.getSystemStats();
-      broadcast({ type: 'stats_update', stats });
-    } catch (error) {
-      console.error('Error in simulation interval:', error);
-    }
-  }, 30000); // Every 30 seconds
+    }, 30000); // Every 30 seconds
+  }
 
   return httpServer;
 }

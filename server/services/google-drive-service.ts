@@ -3,6 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import fs from 'fs-extra';
 import path from 'path';
 import { fileStorageService } from './file-storage-service';
+import { storage } from '../storage';
 
 export class GoogleDriveService {
   private drive: any;
@@ -212,9 +213,11 @@ export class GoogleDriveService {
     }
   }
 
-  private async getCameraInfo(cameraId: string): Promise<any> {
-    // This would typically fetch camera info from storage
-    // For now, return a simple object
+  private async getCameraInfo(cameraId: string): Promise<{ name: string }> {
+    const camera = await storage.getCamera(cameraId);
+    if (camera) {
+      return { name: camera.name };
+    }
     return { name: `Camera_${cameraId}` };
   }
 

@@ -4,6 +4,7 @@ import Sidebar from '@/components/sidebar';
 import Header from '@/components/header';
 import CameraSettingsModal from '@/components/camera-settings-modal';
 import AccountLoginModal from '@/components/account-login-modal';
+import { SmartFilterPanel } from '@/components/smart-filter-panel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Brain, Target, TrendingUp, Eye } from 'lucide-react';
 import { type Detection, type Camera } from '@shared/schema';
@@ -39,7 +40,11 @@ export default function AIDetection() {
             <h1 className="text-3xl font-bold">AI Detection</h1>
             <p className="text-muted-foreground">Monitor AI-powered object and motion detection</p>
           </div>
-          
+
+          <div className="mb-6">
+            <SmartFilterPanel />
+          </div>
+
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

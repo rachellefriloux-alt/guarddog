@@ -210,6 +210,69 @@ export class FileStorageService {
         console.error(`Error cleaning up directory ${dir}:`, error);
       }
     }
+
+    // Disk-quota enforcement: in addition to age-based cleanup, prune oldest
+    // recordings/uploads when the total exceeds STORAGE_MAX_GB. This is
+    // critical on laptops where age alone won't keep the disk below cap.
+    const maxGb = Number(process.env.STORAGE_MAX_GB || 0);
+    if (maxGb > 0) {
+      await this.enforceDiskQuota(maxGb);
+    }
+  }
+
+  /**
+   * Walk every managed directory and delete the oldest files until the total
+   * size falls below `maxGb` gigabytes. Snapshots are kept (they're small)
+   * so that the recordings page still has thumbnails after pruning.
+   */
+  async enforceDiskQuota(maxGb: number): Promise<void> {
+    const maxBytes = Math.max(1, maxGb) * 1024 * 1024 * 1024;
+    const directories = [this.recordingsDir, this.uploadsDir];
+    type Entry = { path: string; size: number; mtimeMs: number };
+    const entries: Entry[] = [];
+    let totalBytes = 0;
+
+    for (const dir of directories) {
+      try {
+        if (!(await fs.pathExists(dir))) continue;
+        const files = await fs.readdir(dir, { recursive: true });
+        for (const file of files) {
+          const filePath = path.join(dir, file.toString());
+          try {
+            const stats = await fs.stat(filePath);
+            if (stats.isFile()) {
+              entries.push({ path: filePath, size: stats.size, mtimeMs: stats.mtimeMs });
+              totalBytes += stats.size;
+            }
+          } catch {
+            continue;
+          }
+        }
+      } catch (err) {
+        console.error(`Quota scan failed for ${dir}:`, err);
+      }
+    }
+
+    if (totalBytes <= maxBytes) return;
+
+    // Oldest first, so the user keeps the newest footage.
+    entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    let freed = 0;
+    for (const e of entries) {
+      if (totalBytes - freed <= maxBytes) break;
+      try {
+        await fs.unlink(e.path);
+        freed += e.size;
+        console.log(
+          `Quota cleanup: removed ${e.path} (${(e.size / 1024 / 1024).toFixed(1)} MB)`
+        );
+      } catch (err) {
+        console.warn(`Quota cleanup could not remove ${e.path}:`, err);
+      }
+    }
+    console.log(
+      `Quota cleanup complete: freed ${(freed / 1024 / 1024).toFixed(1)} MB to stay under ${maxGb} GB cap.`
+    );
   }
 }
 

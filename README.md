@@ -15,6 +15,19 @@ A comprehensive Web-based IP camera surveillance dashboard that unifies Ring doo
 - **Dark Mode Support**: Complete dark/light theme with persistence
 - **Responsive Design**: Modern UI built with React and Tailwind CSS
 - **Export Reports**: Daily summary reports in HTML/CSV formats
+- **24/7 Cloud-Sync Recording**: Optional `SovereignRecorder` writes RTSP streams as 10-minute MP4 segments straight into a OneDrive / iCloud / Drive sync folder — your existing cloud client uploads each finished clip with no re-encode, no bandwidth spikes, and automatic reconnect.
+
+## 🆓 Run it for free (no paid services required)
+
+GuardDog works without an OpenAI key and without a Google Cloud project:
+
+| Concern         | Free / open path                                                                 |
+| --------------- | -------------------------------------------------------------------------------- |
+| AI vision       | Leave `OPENAI_API_KEY` unset → AI calls return a clean "disabled" response.      |
+| Login           | If `GOOGLE_AUTH_CLIENT_ID` is unset, the login screen exposes a **Continue as Dev User** button that creates a local session via `/api/auth/dev-login`. |
+| Database        | Omit `DATABASE_URL` → in-memory storage (data resets on restart, fine for desktop trial). For persistence, point `DATABASE_URL` at any free Postgres (Supabase, Neon, local docker). |
+| Cloud storage   | Set `SOVEREIGN_STORAGE_PATH` to a folder synced by OneDrive (15 GB free), iCloud Drive (5 GB free), Google Drive desktop (15 GB free), Dropbox (2 GB free), or self-hosted Nextcloud / MinIO. |
+| Vision model    | Override with the cheapest currently-supported model: `OPENAI_VISION_MODEL=gpt-4o-mini`, `OPENAI_TEXT_MODEL=gpt-4o-mini`. |
 
 ## 🏗️ Architecture
 
@@ -30,6 +43,8 @@ A comprehensive Web-based IP camera surveillance dashboard that unifies Ring doo
 **🎯 New to GuardDog?** See the [Quick Start Guide](QUICKSTART.md) for a 5-minute setup!
 
 Want a downloadable desktop version? See [Desktop Packaging Guide](DESKTOP.md).
+
+**Wiring cameras (Ring, eSeeCloud, ONVIF) into GuardDog?** See [DATA_PIPE.md](DATA_PIPE.md) for the `ring-mqtt + go2rtc + Frigate` pipeline.
 
 ### Prerequisites
 

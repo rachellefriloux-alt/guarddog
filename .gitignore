@@ -20,6 +20,12 @@ client/build/
 .env.test.local
 .env.production.local
 
+# Local runtime config — may contain credentials. Never commit.
+config/*
+!config/README.md
+!config/sovereign-streams.example.json
+!config/ring-mqtt.example.json
+
 # Database
 data/
 *.db

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Front_Door",
+    "url": "rtsp://127.0.0.1:8554/REPLACE_WITH_RING_MQTT_STREAM_ID_live"
+  },
+  {
+    "name": "Back_Door",
+    "url": "rtsp://127.0.0.1:8554/REPLACE_WITH_RING_MQTT_STREAM_ID_live"
+  },
+  {
+    "name": "eSeeCloud_Main",
+    "url": "rtsp://admin:REPLACE_WITH_NVR_PASSWORD@192.168.1.50:554/cam/realmonitor?channel=1&subtype=0"
+  }
+]

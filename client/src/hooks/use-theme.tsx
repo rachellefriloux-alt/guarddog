@@ -1,24 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useThemeContext } from '@/components/theme-provider';
 
+/**
+ * Backwards-compatible adapter around the new <ThemeProvider>. Existing
+ * components that just need `isDark` / `toggleTheme` keep working without a
+ * rewrite, while new components can call useThemeContext() directly for
+ * three-state (light / dark / system) control.
+ */
 export function useTheme() {
-  const [isDark, setIsDark] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('darkMode') === 'true';
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    localStorage.setItem('darkMode', isDark.toString());
-  }, [isDark]);
-
-  const toggleTheme = () => setIsDark(!isDark);
-
+  const { resolvedTheme, setTheme } = useThemeContext();
+  const isDark = resolvedTheme === 'dark';
+  const toggleTheme = () => setTheme(isDark ? 'light' : 'dark');
   return { isDark, toggleTheme };
 }
+

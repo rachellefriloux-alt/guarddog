@@ -1,4 +1,5 @@
-import { Switch, Route } from "wouter";
+import { useState } from "react";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -10,10 +11,15 @@ import CloudStorage from "@/pages/cloud-storage";
 import AIDetection from "@/pages/ai-detection";
 import Alerts from "@/pages/alerts";
 import Settings from "@/pages/settings";
+import Diagnostics from "@/pages/diagnostics";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { LoginScreen } from "@/components/login-screen";
 import { Loader2 } from "lucide-react";
+import { ThemeProvider } from "@/components/theme-provider";
+import { CommandPalette } from "@/components/command-palette";
+import { HelpDrawer } from "@/components/help-drawer";
+import { FirstRunWizard } from "@/components/first-run-wizard";
 
 function Router() {
   return (
@@ -25,8 +31,26 @@ function Router() {
       <Route path="/ai-detection" component={AIDetection} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/settings" component={Settings} />
+      <Route path="/diagnostics" component={Diagnostics} />
       <Route component={NotFound} />
     </Switch>
+  );
+}
+
+function AuthenticatedShell() {
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [, navigate] = useLocation();
+
+  return (
+    <>
+      <Router />
+      <CommandPalette
+        onAddCamera={() => navigate("/cameras")}
+        onOpenHelp={() => setHelpOpen(true)}
+      />
+      <HelpDrawer open={helpOpen} onOpenChange={setHelpOpen} />
+      <FirstRunWizard onAddCamera={() => navigate("/cameras")} />
+    </>
   );
 }
 
@@ -48,18 +72,20 @@ function AuthGate() {
     return <LoginScreen />;
   }
 
-  return <Router />;
+  return <AuthenticatedShell />;
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <AuthGate />
-        </TooltipProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <TooltipProvider>
+            <Toaster />
+            <AuthGate />
+          </TooltipProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }
