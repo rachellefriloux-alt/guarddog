@@ -135,6 +135,24 @@ interface RunningRecording {
   reconnectTimer?: NodeJS.Timeout;
   reconnectAttempt: number;
   stopped: boolean;
+  startedAt: number;
+  lastSegmentAt?: number;
+  reconnectsLastHour: number[];
+  lastError?: string;
+}
+
+export type StreamHealthStatus = "ok" | "degraded" | "down";
+
+export interface StreamHealth {
+  name: string;
+  status: StreamHealthStatus;
+  startedAt: number;
+  lastSegmentAt?: number;
+  /** Seconds since the last segment was written (or null if none yet). */
+  secondsSinceLastSegment: number | null;
+  reconnectAttempts: number;
+  reconnectsLastHour: number;
+  lastError?: string;
 }
 
 export class SovereignRecorder {
@@ -187,13 +205,26 @@ export class SovereignRecorder {
       command,
       reconnectAttempt: 0,
       stopped: false,
+      startedAt: Date.now(),
+      reconnectsLastHour: [],
     };
     this.running.set(stream.name, state);
+
+    // ffmpeg emits stderr 'progress' messages whenever it finishes a segment.
+    // Use that as a proxy for "stream is alive" for the health badges.
+    command.on("progress", () => {
+      state.lastSegmentAt = Date.now();
+    });
 
     command.on("error", (err) => {
       if (state.stopped) {
         return;
       }
+      state.lastError = err.message;
+      const now = Date.now();
+      state.reconnectsLastHour.push(now);
+      const hourAgo = now - 60 * 60 * 1000;
+      state.reconnectsLastHour = state.reconnectsLastHour.filter((t) => t >= hourAgo);
       const delay = Math.min(
         this.options.reconnectDelayMs * Math.pow(2, state.reconnectAttempt),
         this.options.maxReconnectDelayMs
@@ -238,6 +269,41 @@ export class SovereignRecorder {
     for (const name of Array.from(this.running.keys())) {
       this.stopStream(name);
     }
+  }
+
+  /**
+   * Snapshot of per-stream health metrics for the UI / API.
+   *
+   *  - `ok`        : last segment within the last 2× segment window
+   *  - `degraded`  : reconnects in last hour or stale segment timestamp
+   *  - `down`      : never produced a segment, or reconnect attempts > 5
+   */
+  getHealth(): StreamHealth[] {
+    const now = Date.now();
+    const segmentMs = this.options.segmentSeconds * 1000;
+    return Array.from(this.running.entries()).map(([name, state]) => {
+      const secondsSinceLastSegment = state.lastSegmentAt
+        ? Math.round((now - state.lastSegmentAt) / 1000)
+        : null;
+      let status: StreamHealthStatus;
+      if (state.reconnectAttempt > 5 || (!state.lastSegmentAt && now - state.startedAt > segmentMs * 2)) {
+        status = "down";
+      } else if (state.reconnectsLastHour.length > 0 || (secondsSinceLastSegment !== null && secondsSinceLastSegment > segmentMs / 1000 + 30)) {
+        status = "degraded";
+      } else {
+        status = "ok";
+      }
+      return {
+        name,
+        status,
+        startedAt: state.startedAt,
+        lastSegmentAt: state.lastSegmentAt,
+        secondsSinceLastSegment,
+        reconnectAttempts: state.reconnectAttempt,
+        reconnectsLastHour: state.reconnectsLastHour.length,
+        lastError: state.lastError,
+      };
+    });
   }
 }
 

@@ -1,9 +1,11 @@
-import { Plus, Moon, Sun, Settings } from 'lucide-react';
-import { useTheme } from '@/hooks/use-theme';
+import { Plus, Settings, HelpCircle, Search } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { ThemeToggle } from '@/components/theme-toggle';
+import { HelpDrawer } from '@/components/help-drawer';
 
 interface HeaderProps {
   layout: '2x2' | '3x3' | '4x4';
@@ -13,8 +15,8 @@ interface HeaderProps {
 }
 
 export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAccountSettings }: HeaderProps) {
-  const { isDark, toggleTheme } = useTheme();
   const { user } = useAuth();
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const layoutOptions: Array<'2x2' | '3x3' | '4x4'> = ['2x2', '3x3', '4x4'];
 
@@ -25,6 +27,10 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
     .slice(0, 2)
     .toUpperCase();
 
+  // Cross-platform shortcut hint — ⌘ on macOS, Ctrl elsewhere.
+  const shortcutLabel =
+    typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform) ? '⌘K' : 'Ctrl K';
+
   return (
     <header className="bg-card border-b border-border px-6 py-4" data-testid="header">
       <div className="flex items-center justify-between">
@@ -33,7 +39,23 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           <p className="text-muted-foreground">Monitor your cameras in real-time</p>
         </div>
 
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
+          {/* Cmd-K hint */}
+          <button
+            type="button"
+            onClick={() => {
+              const evt = new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true });
+              window.dispatchEvent(evt);
+            }}
+            className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-muted/50 text-sm text-muted-foreground hover:bg-muted transition-colors"
+            aria-label={`Open command palette (${shortcutLabel})`}
+            data-testid="button-command-palette"
+          >
+            <Search size={14} />
+            <span>Search…</span>
+            <kbd className="ml-2 px-1.5 py-0.5 rounded bg-background border text-xs font-mono">{shortcutLabel}</kbd>
+          </button>
+
           {/* Layout Controls */}
           <div className="flex bg-muted rounded-lg p-1" data-testid="layout-controls">
             {layoutOptions.map((option) => (
@@ -73,15 +95,19 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
             Accounts
           </Button>
 
-          {/* Dark Mode Toggle */}
+          {/* Help */}
           <Button
             variant="ghost"
             size="icon"
-            onClick={toggleTheme}
-            data-testid="button-theme-toggle"
+            onClick={() => setHelpOpen(true)}
+            aria-label="Help"
+            data-testid="button-help"
           >
-            {isDark ? <Sun size={20} /> : <Moon size={20} />}
+            <HelpCircle size={20} />
           </Button>
+
+          {/* Theme Toggle */}
+          <ThemeToggle />
 
           {/* User Menu */}
           <div className="flex items-center space-x-2" data-testid="user-menu">
@@ -99,6 +125,7 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           </div>
         </div>
       </div>
+      <HelpDrawer open={helpOpen} onOpenChange={setHelpOpen} />
     </header>
   );
 }

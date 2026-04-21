@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import Sidebar from '@/components/sidebar';
 import Header from '@/components/header';
 import CameraGrid from '@/components/camera-grid';
-import CameraSettingsModal from '@/components/camera-settings-modal';
+import CameraAddWizard from '@/components/camera-add-wizard';
 import AccountLoginModal from '@/components/account-login-modal';
 import { type Camera } from '@shared/schema';
 
@@ -34,13 +34,13 @@ export default function Cameras() {
             <p className="text-muted-foreground">Manage and monitor all your cameras</p>
           </div>
           
-          <CameraGrid cameras={cameras} layout={layout} />
+          <CameraGrid cameras={cameras} layout={layout} onAddCamera={() => setIsModalOpen(true)} />
         </main>
       </div>
 
-      <CameraSettingsModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+      <CameraAddWizard
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
       />
 
       <AccountLoginModal 

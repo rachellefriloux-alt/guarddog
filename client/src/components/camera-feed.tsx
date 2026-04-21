@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { type Camera } from '@shared/schema';
 import { cn } from '@/lib/utils';
 import { apiRequest } from '@/lib/queryClient';
+import { StreamHealthBadge } from './stream-health-badge';
 import Hls from 'hls.js';
 
 interface CameraFeedProps {
@@ -327,13 +328,7 @@ export default function CameraFeed({ camera }: CameraFeedProps) {
             {camera.name} - {camera.type.toUpperCase()}
           </h3>
           <div className="flex items-center space-x-2">
-            <div className={cn(
-              "w-2 h-2 rounded-full",
-              streamInfo.isActive ? "bg-success" : camera.isOnline ? "bg-yellow-500" : "bg-muted"
-            )} />
-            <span className="text-sm text-muted-foreground">
-              {streamInfo.isActive ? 'Streaming' : camera.isOnline ? 'Ready' : 'Offline'}
-            </span>
+            <StreamHealthBadge cameraName={camera.name} />
           </div>
         </div>
 
