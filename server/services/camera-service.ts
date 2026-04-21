@@ -2,7 +2,18 @@ import { storage } from "../storage";
 import { openaiService } from "./openai-service";
 import { streamService } from "./stream-service";
 import { fileStorageService } from "./file-storage-service";
+import { ringAuthService } from "./ring-auth-service";
 import { type Camera, type InsertDetection } from "@shared/schema";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegStatic from "ffmpeg-static";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+
+if (ffmpegStatic) {
+  ffmpeg.setFfmpegPath(ffmpegStatic);
+}
 
 export class CameraService {
   async initializeCamera(cameraId: string): Promise<boolean> {
@@ -132,17 +143,41 @@ export class CameraService {
   }
 
   async captureSnapshot(cameraId: string, reason: string = 'manual'): Promise<string | null> {
-    // In a real implementation, this would capture a frame from the live stream
-    // For now, we'll create a placeholder
-    const timestamp = new Date().toISOString();
-    console.log(`Snapshot captured for camera ${cameraId} at ${timestamp} (reason: ${reason})`);
-    
-    // In production, you would:
-    // 1. Get current frame from the stream
-    // 2. Save it using fileStorageService.saveSnapshot()
-    // 3. Return the file path
-    
-    return null;
+    const camera = await storage.getCamera(cameraId);
+    if (!camera || !camera.streamUrl) {
+      console.warn(`captureSnapshot: camera ${cameraId} has no stream URL`);
+      return null;
+    }
+
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `guarddog-snap-${cameraId}-${Date.now()}.jpg`
+    );
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(camera.streamUrl)
+          .inputOptions(["-rtsp_transport", "tcp"])
+          .outputOptions(["-frames:v", "1", "-q:v", "2", "-y"])
+          .on("end", () => resolve())
+          .on("error", (err) => reject(err))
+          .save(tmpFile);
+      });
+
+      const buffer = await fs.promises.readFile(tmpFile);
+      const savedPath = await fileStorageService.saveSnapshot(cameraId, buffer);
+      console.log(
+        `Snapshot captured for camera ${cameraId} (reason: ${reason}) → ${savedPath}`
+      );
+      return savedPath;
+    } catch (err) {
+      console.error(`captureSnapshot failed for ${cameraId}:`, err);
+      return null;
+    } finally {
+      await fs.promises.unlink(tmpFile).catch(() => {
+        /* file may not exist if ffmpeg failed; ignore */
+      });
+    }
   }
 
   async updateCameraStatus(cameraId: string, isOnline: boolean, wifiStrength?: number): Promise<void> {
@@ -178,22 +213,48 @@ export class CameraService {
   }
 
   private async testRTSPConnection(camera: Camera): Promise<boolean> {
-    // In production, you would use ffprobe or similar to test RTSP stream
-    // For now, we'll simulate a connection test
-    console.log(`Testing RTSP connection for ESEE camera ${camera.name} at ${camera.ipAddress}`);
-    return Math.random() > 0.1; // 90% success rate simulation
+    if (!camera.streamUrl) return false;
+    return new Promise<boolean>((resolve) => {
+      // ffprobe will return metadata for a working RTSP stream within ~5s,
+      // or error out for an unreachable / unauthenticated one.
+      const timer = setTimeout(() => resolve(false), 7000);
+      ffmpeg.ffprobe(camera.streamUrl, ["-rtsp_transport", "tcp"], (err) => {
+        clearTimeout(timer);
+        if (err) {
+          console.warn(`RTSP probe failed for ${camera.name}: ${err.message}`);
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
   }
 
   private async testRingConnection(camera: Camera): Promise<boolean> {
-    // In production, you would test Ring API connectivity
-    console.log(`Testing Ring API connection for camera ${camera.name}`);
-    return Math.random() > 0.05; // 95% success rate simulation
+    // Connection health for Ring cameras = ring-client-api session is alive.
+    // The shared ringAuthService tracks session state.
+    const ok = ringAuthService.isConnected();
+    if (!ok) {
+      console.warn(`Ring connection check failed for ${camera.name}: not authenticated`);
+    }
+    return ok;
   }
 
   private async testGenericConnection(camera: Camera): Promise<boolean> {
-    // Test generic IP camera connection
-    console.log(`Testing generic camera connection for ${camera.name} at ${camera.ipAddress}`);
-    return Math.random() > 0.2; // 80% success rate simulation
+    if (!camera.ipAddress) return false;
+    const port = parseInt(camera.port || "554", 10) || 554;
+    return new Promise<boolean>((resolve) => {
+      const socket = new net.Socket();
+      const cleanup = (result: boolean) => {
+        socket.destroy();
+        resolve(result);
+      };
+      socket.setTimeout(3000);
+      socket.once("connect", () => cleanup(true));
+      socket.once("timeout", () => cleanup(false));
+      socket.once("error", () => cleanup(false));
+      socket.connect(port, camera.ipAddress);
+    });
   }
 
   async getAllCameraStatuses(): Promise<{ [cameraId: string]: boolean }> {

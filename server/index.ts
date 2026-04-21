@@ -3,13 +3,18 @@ import { config } from "dotenv";
 config();
 
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
-import createMemoryStore from "memorystore";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { recognitionService } from "./services/recognition-service";
 import { dailySummaryService } from "./services/daily-summary-service";
 import { streamService } from "./services/stream-service";
+import { sovereignRecorder, loadStreamsFromFile } from "./services/sovereign-recorder";
+import { fileStorageService } from "./services/file-storage-service";
+import { mqttEventsBridge } from "./services/mqtt-events-bridge";
+import { getActiveProvider } from "./services/ai-provider-router";
+import { sessionMiddleware } from "./session";
 
 // Environment validation
 function validateEnvironment() {
@@ -46,9 +51,9 @@ function validateEnvironment() {
     console.error("\n❌ CRITICAL CONFIGURATION ERRORS:");
     errors.forEach(err => console.error(`  - ${err}`));
     console.error("\nPlease fix these errors before running in production.\n");
-    if (isProduction) {
-      process.exit(1);
-    }
+    // Note: we no longer exit the process here. When packaged inside Electron the
+    // window would never get a chance to render an error. Instead, log loudly and
+    // continue with degraded functionality so operators can still reach the UI.
   }
 
   if (warnings.length > 0) {
@@ -66,32 +71,73 @@ function validateEnvironment() {
 validateEnvironment();
 
 const app = express();
+
+// Trust the first proxy hop (e.g. when running behind nginx / Caddy / Cloudflare).
+// Required for express-rate-limit and secure cookies to work correctly behind a proxy.
+app.set("trust proxy", 1);
+
+// Security headers. CSP is intentionally disabled in development because Vite
+// injects inline scripts and uses ws:// for HMR, both of which a strict CSP
+// would block (causing a blank dev screen). In production we apply a strict
+// policy that still allows Google Identity Services, Google Fonts, HLS streams,
+// and data URIs. CodeQL flags the dev-mode "csp: false" — that is intentional
+// and only takes effect when NODE_ENV !== "production".
+const isProductionRuntime = process.env.NODE_ENV === "production";
+app.use(
+  helmet({
+    contentSecurityPolicy: isProductionRuntime
+      ? {
+          useDefaults: true,
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: [
+              "'self'",
+              "https://accounts.google.com",
+              "https://apis.google.com",
+            ],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+            imgSrc: ["'self'", "data:", "blob:", "https:"],
+            mediaSrc: ["'self'", "blob:", "data:", "https:"],
+            connectSrc: [
+              "'self'",
+              "https://accounts.google.com",
+              "https://www.googleapis.com",
+              "ws:",
+              "wss:",
+            ],
+            frameSrc: ["'self'", "https://accounts.google.com"],
+            objectSrc: ["'none'"],
+          },
+        }
+      : false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// Global rate limiter for the API surface. Protects login, upload, and stream endpoints
+// from brute force and accidental thundering-herd. The static client and WebSocket
+// are intentionally excluded.
+const apiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 600, // generous - allows live polling but blocks runaway clients
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests, please try again later." },
+});
+app.use("/api", apiRateLimiter);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-const MemoryStore = createMemoryStore(session);
-
-const sessionSecret = process.env.SESSION_SECRET || "guarddog-development-secret";
-
 if (!process.env.SESSION_SECRET) {
-  console.warn("[GuardDog] SESSION_SECRET is not set. Using a development fallback secret. Set SESSION_SECRET in your environment for production deployments.");
+  console.warn(
+    "[GuardDog] SESSION_SECRET is not set. Using a development fallback secret. " +
+    "Set SESSION_SECRET in your environment for production deployments."
+  );
 }
 
-app.use(
-  session({
-    name: "guarddog.sid",
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    store: new MemoryStore({ checkPeriod: 1000 * 60 * 60 * 24 }),
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-    },
-  })
-);
+app.use(sessionMiddleware);
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -137,6 +183,10 @@ app.use((req, res, next) => {
     // Initialize AI services
     console.log('🤖 Initializing AI Recognition Service...');
     await recognitionService.initialize();
+
+    // Probe and announce the active AI provider (free local Ollama, paid OpenAI, or disabled).
+    const activeProvider = await getActiveProvider();
+    console.log(`🧠 Active AI provider: ${activeProvider}`);
     
     console.log('📊 Setting up Daily Summary Service...');
     await dailySummaryService.scheduleDailySummary();
@@ -144,6 +194,35 @@ app.use((req, res, next) => {
     // Clean up any orphaned video streams from a previous bad shutdown
     console.log('🧹 Preparing Stream Service...');
     await streamService.cleanup();
+
+    // Sovereign recorder: bulk RTSP → segmented MP4 to a cloud-synced folder
+    // (OneDrive by default). Only auto-starts when SOVEREIGN_STREAMS_FILE is
+    // set, so existing deployments are unaffected.
+    const sovereignStreams = loadStreamsFromFile();
+    if (sovereignStreams.length > 0) {
+      console.log(`🎞️  Starting sovereign recorder for ${sovereignStreams.length} stream(s) → ${sovereignRecorder.storagePath}`);
+      sovereignRecorder.start(sovereignStreams);
+    }
+
+    // Schedule periodic cleanup of old recordings/snapshots/uploads.
+    // Honors CLEANUP_OLDER_THAN_DAYS from .env (default: 30 days).
+    const cleanupDays = Math.max(1, parseInt(process.env.CLEANUP_OLDER_THAN_DAYS || '30', 10) || 30);
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const runCleanup = () => {
+      fileStorageService
+        .cleanupOldFiles(cleanupDays)
+        .catch((err) => console.error('Storage cleanup failed:', err));
+    };
+    runCleanup(); // Run once at startup
+    setInterval(runCleanup, ONE_DAY_MS).unref();
+    console.log(`🧽 Storage cleanup scheduled daily (files older than ${cleanupDays} days will be removed)`);
+
+    // MQTT events bridge: subscribe to a local AI service (e.g. Frigate) and
+    // record its detection events. Disabled unless MQTT_URL is set.
+    if (mqttEventsBridge.isConfigured()) {
+      console.log('📡 Starting MQTT events bridge...');
+      mqttEventsBridge.start();
+    }
 
     const server = await registerRoutes(app);
 

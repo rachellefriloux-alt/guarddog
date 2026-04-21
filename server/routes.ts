@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
+import { createServer, type Server, type IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import path from "path";
@@ -15,6 +15,9 @@ import { ringAuthService } from "./services/ring-auth-service";
 import { eseeCloudService } from "./services/esee-cloud-service";
 import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 import { googleAuthService } from "./services/google-auth-service";
+import { getActiveProvider, analyzeMotion } from "./services/ai-provider-router";
+import { localOcrService } from "./services/local-ocr-service";
+import { sessionMiddleware } from "./session";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -24,10 +27,41 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
 
-  // WebSocket server for real-time updates
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-  
+  // WebSocket server for real-time updates. We use noServer mode and run the
+  // session middleware against the upgrade request so only authenticated users
+  // can subscribe to motion events.
+  const wss = new WebSocketServer({ noServer: true });
+
   const connectedClients = new Set<WebSocket>();
+
+  httpServer.on("upgrade", (request: IncomingMessage, socket, head) => {
+    const url = request.url || "";
+    if (!url.startsWith("/ws")) {
+      socket.destroy();
+      return;
+    }
+
+    // Run express-session against the upgrade request to populate request.session.
+    // The session middleware only reads from req and writes to res.setHeader / cookies,
+    // neither of which apply during a WS handshake — passing a no-op response is safe
+    // and is the documented pattern for this use-case.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const noopRes = { setHeader() {}, getHeader() {}, end() {} } as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sessionMiddleware(request as any, noopRes, () => {
+      const sessionUser = (request as unknown as { session?: { user?: unknown } })
+        .session?.user;
+      if (!sessionUser) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    });
+  });
 
   wss.on('connection', (ws) => {
     connectedClients.add(ws);
@@ -170,6 +204,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     return res.status(401).json({ message: "Authentication required" });
+  });
+
+  // ----- Free / local AI endpoints --------------------------------------------
+  app.get("/api/ai/status", async (_req, res) => {
+    try {
+      const provider = await getActiveProvider();
+      res.json({
+        provider,
+        ollama: {
+          host: process.env.OLLAMA_HOST || "http://localhost:11434",
+          visionModel: process.env.OLLAMA_VISION_MODEL || "llava",
+          textModel: process.env.OLLAMA_TEXT_MODEL || "llama3.2",
+        },
+        openaiConfigured: Boolean(
+          process.env.OPENAI_API_KEY &&
+            process.env.OPENAI_API_KEY !== "your-openai-api-key-here"
+        ),
+        ocrEnabled: true,
+      });
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  app.post("/api/ai/analyze", async (req, res) => {
+    try {
+      const { image } = req.body || {};
+      if (!image || typeof image !== "string") {
+        return res.status(400).json({ message: "Body must include base64 'image'" });
+      }
+      const result = await analyzeMotion(image);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  app.post("/api/ai/ocr", upload.single("image"), async (req, res) => {
+    try {
+      const buffer = req.file?.buffer;
+      if (!buffer) {
+        return res.status(400).json({ message: "Upload a single image file under 'image'" });
+      }
+      const result = await localOcrService.readImage(buffer);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
   });
 
   // Camera routes
@@ -888,27 +970,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Simulate motion detection for demo purposes
-  setInterval(async () => {
-    try {
-      const cameras = await storage.getCameras();
-      for (const camera of cameras) {
-        if (camera.isOnline && camera.aiDetectionEnabled) {
-          await cameraService.simulateMotionDetection(camera.id);
+  // Demo motion simulator. Disabled by default — only runs when DEMO_MODE=true,
+  // which is intended for screenshots / showcases when no real cameras are
+  // attached. Real detections come from analyzeCameraFeed() (cloud or local AI)
+  // or the MQTT events bridge (Frigate / ring-mqtt).
+  if ((process.env.DEMO_MODE || "").toLowerCase() === "true") {
+    console.log("⚠️  DEMO_MODE=true — generating simulated motion events every 30s");
+    setInterval(async () => {
+      try {
+        const cameras = await storage.getCameras();
+        for (const camera of cameras) {
+          if (camera.isOnline && camera.aiDetectionEnabled) {
+            await cameraService.simulateMotionDetection(camera.id);
+          }
         }
+
+        // Broadcast recent detections to connected clients
+        const recentDetections = await storage.getRecentDetections(5);
+        broadcast({ type: 'detections_update', detections: recentDetections });
+
+        // Broadcast system stats update
+        const stats = await storage.getSystemStats();
+        broadcast({ type: 'stats_update', stats });
+      } catch (error) {
+        console.error('Error in simulation interval:', error);
       }
-
-      // Broadcast recent detections to connected clients
-      const recentDetections = await storage.getRecentDetections(5);
-      broadcast({ type: 'detections_update', detections: recentDetections });
-
-      // Broadcast system stats update
-      const stats = await storage.getSystemStats();
-      broadcast({ type: 'stats_update', stats });
-    } catch (error) {
-      console.error('Error in simulation interval:', error);
-    }
-  }, 30000); // Every 30 seconds
+    }, 30000); // Every 30 seconds
+  }
 
   return httpServer;
 }

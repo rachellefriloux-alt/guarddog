@@ -1,0 +1,11 @@
+{
+  "_comment": "Template for the ring-mqtt config.json. This file is consumed by ring-mqtt itself, NOT by GuardDog. Place your real version OUTSIDE this repo (or at config/ring-mqtt.json which is gitignored). NEVER commit a refreshToken or password.",
+  "enable_events": true,
+  "mqtt_url": "mqtt://127.0.0.1:1883",
+  "beam_duration": 90,
+  "go2rtc_binary": "REPLACE_WITH_LOCAL_PATH_TO_go2rtc",
+  "livestream_user": "admin",
+  "livestream_pass": "REPLACE_WITH_A_LONG_RANDOM_PASSWORD",
+  "enable_rtsp": true,
+  "refreshToken": "REPLACE_AT_RUNTIME_BY_RING_MQTT_PAIRING_FLOW"
+}

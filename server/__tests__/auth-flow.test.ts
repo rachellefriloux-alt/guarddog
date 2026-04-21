@@ -1,33 +1,16 @@
 import express from "express";
-import session from "express-session";
-import createMemoryStore from "memorystore";
 import request from "supertest";
 import { describe, it, beforeEach, afterEach, expect, vi } from "vitest";
 import { registerRoutes } from "../routes";
 import { googleAuthService } from "../services/google-auth-service";
-
-const MemoryStore = createMemoryStore(session);
+import { sessionMiddleware } from "../session";
 
 const buildApp = async () => {
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
-  app.use(
-    session({
-      name: "guarddog.sid",
-      secret: "test-session-secret",
-      resave: false,
-      saveUninitialized: false,
-      store: new MemoryStore({ checkPeriod: 1000 * 60 * 60 }),
-      cookie: {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: false,
-        maxAge: 1000 * 60 * 60,
-      },
-    })
-  );
+  app.use(sessionMiddleware);
 
   const server = await registerRoutes(app);
 
@@ -82,7 +65,9 @@ describe("Google authentication flow", () => {
 
     const camerasResponse = await agent.get("/api/cameras").expect(200);
     expect(Array.isArray(camerasResponse.body)).toBe(true);
-    expect(camerasResponse.body.length).toBeGreaterThan(0);
+    // The auth flow test should verify that the protected route is reachable
+    // post-login, not that the in-memory storage was seeded — seed data is
+    // gated behind DEMO_MODE so production deployments start clean.
 
     await agent.post("/api/auth/logout").expect(200);
     await agent.get("/api/cameras").expect(401);

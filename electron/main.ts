@@ -59,11 +59,13 @@ async function startServerIfPackaged(): Promise<void> {
 }
 
 function createWindow(): void {
+  const iconPath = path.join(app.getAppPath(), "build", "icon.png");
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     show: false,
     autoHideMenuBar: true,
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
