@@ -23,8 +23,6 @@ export interface TestUrlInput {
   url: string;
   username?: string;
   password?: string;
-  /** Override the default 8 s probe timeout (in ms). */
-  timeoutMs?: number;
 }
 
 export interface TestUrlResult {
@@ -85,7 +83,10 @@ export function bandwidthAdvice(bitrateKbps?: number): string | undefined {
  */
 export function testUrl(input: TestUrlInput): Promise<TestUrlResult> {
   const probeUrl = injectCredentials(input.url, input.username, input.password);
-  const timeoutMs = Math.max(2000, Math.min(input.timeoutMs ?? 8000, 30_000));
+  // Fixed timeout. We deliberately ignore any client-supplied value so a
+  // hostile (or buggy) caller can't tie up server resources by requesting a
+  // very long timer.
+  const timeoutMs = 8000;
 
   return new Promise<TestUrlResult>((resolve) => {
     let settled = false;

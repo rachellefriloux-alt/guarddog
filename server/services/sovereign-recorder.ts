@@ -187,6 +187,13 @@ export class SovereignRecorder {
       this.options.storagePath,
       `${safeName}_%Y-%m-%d_%H-%M-%S.mp4`
     );
+    // Side output: one JPEG poster per minute. Lets the Recordings page show
+    // a thumbnail grid instead of a wall of filenames. Encoded at very low
+    // bitrate so it never noticeably impacts CPU or disk.
+    const thumbPattern = path.join(
+      this.options.storagePath,
+      `${safeName}_%Y-%m-%d_%H-%M-%S.jpg`
+    );
 
     console.log(`[SovereignRecorder] Securing ${safeName} → ${outputPattern}`);
 
@@ -199,7 +206,14 @@ export class SovereignRecorder {
         "-reset_timestamps", "1",
         "-strftime", "1",
       ])
-      .output(outputPattern);
+      .output(outputPattern)
+      // Second pipeline: low-FPS poster frames as JPEG thumbnails.
+      .output(thumbPattern)
+      .outputOptions([
+        "-vf", "fps=1/60,scale=320:-2",
+        "-q:v", "5",
+        "-strftime", "1",
+      ]);
 
     const state: RunningRecording = {
       command,

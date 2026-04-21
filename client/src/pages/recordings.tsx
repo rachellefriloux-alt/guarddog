@@ -7,13 +7,15 @@ import AccountLoginModal from '@/components/account-login-modal';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Video, Calendar, Clock, Download, Play, Eye } from 'lucide-react';
+import { Video, Calendar, Clock, Download, Play, Share2 } from 'lucide-react';
 import { type Recording } from '@shared/schema';
+import { useToast } from '@/hooks/use-toast';
 
 export default function Recordings() {
   const [layout, setLayout] = useState<'2x2' | '3x3' | '4x4'>('2x2');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const { toast } = useToast();
 
   const { data: recordings = [] } = useQuery<Recording[]>({
     queryKey: ['/api/recordings'],
@@ -52,6 +54,35 @@ export default function Recordings() {
       }
     } catch (error) {
       console.error('Download failed:', error);
+    }
+  };
+
+  /**
+   * Mint a share token for a recording so users can hand a single, short-lived
+   * URL to a neighbor / officer without exposing the rest of their library.
+   * The link is copied straight to the clipboard.
+   */
+  const handleShare = async (recordingId: string) => {
+    try {
+      const res = await fetch(`/api/recordings/${recordingId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttlDays: 7 }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { url, expiresAt } = await res.json();
+      const fullUrl = `${window.location.origin}${url}`;
+      await navigator.clipboard.writeText(fullUrl);
+      toast({
+        title: 'Share link copied',
+        description: `Expires ${new Date(expiresAt).toLocaleString()}.`,
+      });
+    } catch (err) {
+      toast({
+        title: 'Could not generate share link',
+        description: (err as Error).message,
+        variant: 'destructive',
+      });
     }
   };
 
@@ -153,6 +184,15 @@ export default function Recordings() {
                         >
                           <Download className="h-4 w-4 mr-2" />
                           Download
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleShare(recording.id)}
+                          data-testid={`button-share-${recording.id}`}
+                        >
+                          <Share2 className="h-4 w-4 mr-2" />
+                          Share
                         </Button>
                       </div>
                     </div>

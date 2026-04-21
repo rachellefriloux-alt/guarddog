@@ -19,6 +19,7 @@
 
 import mqtt, { type MqttClient } from "mqtt";
 import { storage } from "../storage";
+import { notificationService } from "./notification-service";
 
 export interface MqttBridgeOptions {
   url?: string;
@@ -154,6 +155,24 @@ export class MqttEventsBridge {
         metadata: { classification: label },
       });
       console.log(`[MQTT] Recorded ${label} on ${cameraId} (${(confidence * 100).toFixed(0)}%)`);
+
+      // Fan out to enabled notification sinks (ntfy / Discord / Pushover /
+      // generic webhook). All sinks no-op when nothing is configured, so
+      // there is zero impact for users who haven't wired up channels yet.
+      // Only notify on person/vehicle to avoid spamming users with every
+      // animal that wanders by — this matches the typical Frigate use case.
+      const cls = classifyLabel(label);
+      if (cls === "person" || cls === "vehicle") {
+        // Fire-and-forget; never block the event loop on outbound HTTP.
+        void notificationService
+          .send({
+            title: `${cls === "person" ? "Person" : "Vehicle"} on ${cameraId}`,
+            message: `${label} detected with ${(confidence * 100).toFixed(0)}% confidence.`,
+            level: cls === "person" ? "alert" : "info",
+            meta: { cameraId, label, confidence },
+          })
+          .catch((err) => console.error("[MQTT] notification fan-out failed:", err));
+      }
     } catch (err) {
       console.error("[MQTT] Failed to persist detection:", err);
     }

@@ -26,6 +26,7 @@ import { runDiagnostics } from "./services/diagnostics";
 import { auditLog } from "./services/audit-log";
 import { notificationService } from "./services/notification-service";
 import { mintShareToken, verifyShareToken } from "./services/clip-share";
+import { parseSmartRule, ruleMatches, type SmartRule } from "./services/smart-filter";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -279,11 +280,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // advisory when the stream is too hot for typical home upload pipes.
   app.post("/api/cameras/test-url", async (req, res) => {
     try {
-      const { url, username, password, timeoutMs } = req.body || {};
+      const { url, username, password } = req.body || {};
       if (!url || typeof url !== "string") {
         return res.status(400).json({ message: "Body must include a 'url' string." });
       }
-      const result = await testUrl({ url, username, password, timeoutMs });
+      const result = await testUrl({ url, username, password });
       auditLog.record({
         event: "camera.test_url",
         detail: `${url} → ${result.ok ? "ok" : `error: ${result.error ?? "unknown"}`}`,
@@ -301,8 +302,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // environments — the UI surfaces that gracefully.
   app.get("/api/cameras/discover", async (req, res) => {
     try {
-      const timeoutMs = req.query.timeoutMs ? Number(req.query.timeoutMs) : undefined;
-      const devices = await discoverOnvifDevices({ timeoutMs });
+      const devices = await discoverOnvifDevices();
       auditLog.record({
         event: "discovery.run",
         detail: `${devices.length} device(s) responded`,
@@ -402,6 +402,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const filePath = await fileStorageService.getRecordingPath(recording.cameraId, recording.filename);
       if (!fs.existsSync(filePath)) return res.status(404).json({ message: "File not on disk" });
       res.download(filePath, recording.filename);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ----- AI smart filters --------------------------------------------------
+  // Convert a natural-language alert description into a structured rule using
+  // the active AI provider, with a regex fallback when no provider is set up.
+  app.post("/api/ai/smart-filter/parse", async (req, res) => {
+    try {
+      const prompt = req.body?.prompt;
+      if (!prompt || typeof prompt !== "string") {
+        return res.status(400).json({ message: "Body must include a 'prompt' string." });
+      }
+      const result = await parseSmartRule(prompt);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // Test a saved rule against a hypothetical event so the UI can show users
+  // what their rule will and won't fire on.
+  app.post("/api/ai/smart-filter/test", (req, res) => {
+    try {
+      const rule: SmartRule = req.body?.rule;
+      const event = req.body?.event;
+      if (!rule || !event) {
+        return res.status(400).json({ message: "Provide both 'rule' and 'event'." });
+      }
+      res.json({ matches: ruleMatches(rule, event) });
     } catch (err) {
       res.status(500).json({ message: (err as Error).message });
     }

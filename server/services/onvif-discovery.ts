@@ -87,7 +87,7 @@ function parseResponse(address: string, xml: string): DiscoveredDevice {
 }
 
 export interface DiscoverOptions {
-  /** How long to wait for responses (ms). Default 4000. */
+  /** Reserved — currently ignored to prevent client-controlled timer values. */
   timeoutMs?: number;
 }
 
@@ -95,8 +95,10 @@ export interface DiscoverOptions {
  * Run WS-Discovery and resolve with the unique devices that replied. Always
  * resolves; never throws. Returns empty array if multicast is blocked.
  */
-export function discoverOnvifDevices(opts: DiscoverOptions = {}): Promise<DiscoveredDevice[]> {
-  const timeout = Math.max(1000, Math.min(opts.timeoutMs ?? 4000, 15_000));
+export function discoverOnvifDevices(_opts: DiscoverOptions = {}): Promise<DiscoveredDevice[]> {
+  // Fixed timeout. We deliberately do not honor a client-supplied value so a
+  // hostile or buggy caller can't tie up server resources with long timers.
+  const timeout = 4000;
 
   return new Promise((resolve) => {
     const devicesByAddress = new Map<string, DiscoveredDevice>();

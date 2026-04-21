@@ -3,6 +3,7 @@ import { openaiService } from "./openai-service";
 import { streamService } from "./stream-service";
 import { fileStorageService } from "./file-storage-service";
 import { ringAuthService } from "./ring-auth-service";
+import { notificationService } from "./notification-service";
 import { type Camera, type InsertDetection } from "@shared/schema";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
@@ -119,6 +120,19 @@ export class CameraService {
           if (result.confidence > 0.8) {
             const imageBuffer = Buffer.from(imageBase64, 'base64');
             await fileStorageService.saveSnapshot(cameraId, imageBuffer);
+          }
+
+          // Fan out to user-configured notification sinks (no-op when none
+          // are configured). Always non-blocking.
+          if (result.type === 'person' || result.type === 'vehicle') {
+            void notificationService
+              .send({
+                title: `${result.type === 'person' ? 'Person' : 'Vehicle'} on ${camera.name}`,
+                message: result.description,
+                level: result.type === 'person' ? 'alert' : 'info',
+                meta: { cameraId, type: result.type, confidence: result.confidence },
+              })
+              .catch((err) => console.error('[CameraService] notification send failed:', err));
           }
         }
       }

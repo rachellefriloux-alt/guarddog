@@ -96,3 +96,35 @@ function disabledResponse(reason: string): MotionAnalysis {
     metadata: { provider: "disabled" },
   };
 }
+
+/**
+ * Generate a free-form text completion via the active AI provider. Used by
+ * the smart-filter rule generator and any other "ask the LLM a question"
+ * surface in the app. Returns null when no provider is available so callers
+ * can degrade gracefully instead of throwing.
+ */
+export async function generateText(prompt: string): Promise<string | null> {
+  const provider = await getActiveProvider();
+  if (provider === "ollama") {
+    try {
+      return await ollamaService.generateText(prompt);
+    } catch (err) {
+      console.warn("[AIProviderRouter] Ollama text generation failed:", err);
+      return null;
+    }
+  }
+  if (provider === "openai") {
+    try {
+      // openaiService doesn't expose a raw text method; reuse the analyzer
+      // by passing a structured prompt as a system instruction. We keep the
+      // surface area small to avoid a hard dep on the chat-completion API
+      // shape changing under us.
+      const text = await openaiService.generateText?.(prompt);
+      if (typeof text === "string") return text;
+    } catch (err) {
+      console.warn("[AIProviderRouter] OpenAI text generation failed:", err);
+    }
+    return null;
+  }
+  return null;
+}
