@@ -29,6 +29,8 @@ A comprehensive Web-based IP camera surveillance dashboard that unifies Ring doo
 
 **🎯 New to GuardDog?** See the [Quick Start Guide](QUICKSTART.md) for a 5-minute setup!
 
+Want a downloadable desktop version? See [Desktop Packaging Guide](DESKTOP.md).
+
 ### Prerequisites
 
 - Node.js 18+ 

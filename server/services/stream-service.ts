@@ -136,7 +136,7 @@ export class StreamService {
   }
 
   private async setupRingStream(camera: Camera, playlistPath: string, segmentTemplate: string): Promise<ChildProcess> {
-    // Pulling the actual feed from the Ring-MQTT bridge running in the background
+    // Pulling the actual feed from the local Ring-MQTT bridge running in the background
     const ringRtspUrl = process.env.RING_RTSP_URL || 'rtsp://127.0.0.1:8554/front_door';
 
     const ffmpegArgs = [
@@ -291,16 +291,3 @@ export class StreamService {
 }
 
 export const streamService = new StreamService();
-
-// Cleanup on process exit (temporarily disabled for debugging)
-// process.on('SIGINT', async () => {
-//   console.log('Cleaning up streams...');
-//   await streamService.cleanup();
-//   process.exit(0);
-// });
-
-// process.on('SIGTERM', async () => {
-//   console.log('Cleaning up streams...');
-//   await streamService.cleanup();
-//   process.exit(0);
-// });
