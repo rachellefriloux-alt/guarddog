@@ -55,7 +55,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // neither of which apply during a WS handshake — passing a no-op response is safe
     // and is the documented pattern for this use-case.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const noopRes = { setHeader() {}, getHeader() {}, end() {} } as any;
+    const noopRes = { setHeader() {}, getHeader() {}, getHeaders() { return {}; }, end() {} } as any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sessionMiddleware(request as any, noopRes, () => {
       const sessionUser = (request as unknown as { session?: { user?: unknown } })

@@ -44,7 +44,16 @@ export default function Header({ layout, onLayoutChange, onAddCamera, onOpenAcco
           <button
             type="button"
             onClick={() => {
-              const evt = new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true });
+              // Match the platform — synthesizing both modifiers can fire the
+              // listener twice on systems that observe each one separately.
+              const isMac =
+                typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform);
+              const evt = new KeyboardEvent('keydown', {
+                key: 'k',
+                metaKey: isMac,
+                ctrlKey: !isMac,
+                bubbles: true,
+              });
               window.dispatchEvent(evt);
             }}
             className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-muted/50 text-sm text-muted-foreground hover:bg-muted transition-colors"

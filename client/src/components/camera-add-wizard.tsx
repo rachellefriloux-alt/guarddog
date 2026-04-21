@@ -241,9 +241,16 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
   });
 
   const submit = () => {
+    // Map vendor preset → schema-level camera type. Anything we don't have an
+    // explicit branch for is treated as 'generic'.
+    const PRESET_TO_TYPE: Record<string, string> = {
+      ring: "ring",
+      "esee-cloud": "esee",
+    };
+    const cameraType = PRESET_TO_TYPE[state.presetId] ?? "generic";
     const camera: InsertCamera = {
       name: state.name,
-      type: state.presetId === "ring" ? "ring" : state.presetId === "esee-cloud" ? "esee" : "generic",
+      type: cameraType,
       ipAddress: state.ip,
       port: state.port,
       streamUrl: state.streamUrl,
