@@ -20,6 +20,12 @@ const HELP_TOPICS: { id: string; title: string; body: string }[] = [
       "Three providers, in priority order: a local Ollama install (free), OpenAI (paid), or disabled. Run `ollama pull llava` to enable vision detection without sending frames to the cloud. The MQTT bridge can also import detections from Frigate.",
   },
   {
+    id: "parity",
+    title: "Parity dashboard",
+    body:
+      "Use Parity Dashboard to track combined eSeeCloud + Ring capabilities in one matrix. It marks each feature as Must/Should/Later and shows whether it's completed, in progress, or deferred across MVP, Advanced AI, and Premium phases.",
+  },
+  {
     id: "notifications",
     title: "Notifications",
     body:

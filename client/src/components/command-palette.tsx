@@ -6,6 +6,7 @@ import {
   Cloud,
   Grid,
   HelpCircle,
+  Layers,
   PlayCircle,
   Plus,
   Settings as SettingsIcon,
@@ -67,6 +68,7 @@ export function CommandPalette({ onAddCamera, onOpenHelp }: CommandPaletteProps)
           <CommandItem onSelect={() => go("/recordings")}><PlayCircle className="mr-2 h-4 w-4" /> Recordings</CommandItem>
           <CommandItem onSelect={() => go("/alerts")}><Bell className="mr-2 h-4 w-4" /> Alerts</CommandItem>
           <CommandItem onSelect={() => go("/ai-detection")}><Brain className="mr-2 h-4 w-4" /> AI Detection</CommandItem>
+          <CommandItem onSelect={() => go("/parity-dashboard")}><Layers className="mr-2 h-4 w-4" /> Parity Dashboard</CommandItem>
           <CommandItem onSelect={() => go("/cloud-storage")}><Cloud className="mr-2 h-4 w-4" /> Cloud Storage</CommandItem>
           <CommandItem onSelect={() => go("/settings")}><SettingsIcon className="mr-2 h-4 w-4" /> Settings</CommandItem>
           <CommandItem onSelect={() => go("/diagnostics")}><Stethoscope className="mr-2 h-4 w-4" /> Diagnostics</CommandItem>
