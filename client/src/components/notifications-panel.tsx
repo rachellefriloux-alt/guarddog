@@ -8,6 +8,9 @@ import {
   History,
   Info,
   Mail,
+  Video,
+  WifiOff,
+  Radio,
 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -370,6 +373,162 @@ export function AlertPipelinePanel() {
               )}
               Send digest now
             </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Camera supervisor panel
+// ---------------------------------------------------------------------------
+
+type SupervisorCameraState = "online" | "offline" | "connecting";
+
+interface SupervisorCameraEntry {
+  cameraId: string;
+  state: SupervisorCameraState;
+  circuit: "closed" | "open" | "half-open";
+  failures: number;
+  lastSuccessAt: number | null;
+}
+
+interface SupervisorStatus {
+  enabled: boolean;
+  message?: string;
+  total?: number;
+  counts?: { online: number; offline: number; connecting: number };
+  cameras?: SupervisorCameraEntry[];
+}
+
+function formatRelative(at: number | null): string {
+  if (at === null) return "never";
+  const delta = Date.now() - at;
+  if (delta < 0) return "just now";
+  if (delta < 60_000) return `${Math.round(delta / 1000)}s ago`;
+  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
+  return `${Math.round(delta / 86_400_000)}d ago`;
+}
+
+function stateBadgeClass(state: SupervisorCameraState): string {
+  switch (state) {
+    case "online":
+      return "text-emerald-600 dark:text-emerald-400";
+    case "connecting":
+      return "text-amber-600 dark:text-amber-400";
+    case "offline":
+    default:
+      return "text-destructive";
+  }
+}
+
+function StateIcon({ state }: { state: SupervisorCameraState }) {
+  if (state === "online") return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+  if (state === "connecting") return <Radio className="h-4 w-4 text-amber-500" />;
+  return <WifiOff className="h-4 w-4 text-destructive" />;
+}
+
+/**
+ * Surfaces the running StreamSupervisor (per-camera reachability, circuit
+ * breaker state, consecutive failures, last successful health probe). Only
+ * meaningful when the operator has set CAMERA_SUPERVISOR=true; otherwise the
+ * panel renders an honest "disabled" state with the exact env var to flip.
+ */
+export function SupervisorStatusPanel() {
+  const { data, isLoading } = useQuery<SupervisorStatus>({
+    queryKey: ["/api/supervisor/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/supervisor/status");
+      // 503 is the documented "disabled" response — surface its body, don't throw.
+      const body = (await res.json()) as SupervisorStatus;
+      return body;
+    },
+    refetchInterval: 10_000,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Video className="h-5 w-5" />
+          <CardTitle>Camera supervisor</CardTitle>
+        </div>
+        <CardDescription>
+          Per-camera reachability, circuit-breaker state, and last successful health probe.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {isLoading && <Skeleton className="h-20 w-full" />}
+
+        {data && !data.enabled && (
+          <div
+            className="flex items-start gap-2 p-3 border rounded-lg text-sm"
+            data-testid="supervisor-disabled"
+          >
+            <Info className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+            <div>
+              <div className="font-medium">Supervisor disabled</div>
+              <div className="text-muted-foreground">
+                Set <code>CAMERA_SUPERVISOR=true</code> in your <code>.env</code> and restart to
+                enable per-camera health probes, full-jitter reconnect backoff, and the
+                circuit-breaker.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {data?.enabled && (
+          <div className="space-y-3" data-testid="supervisor-enabled">
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <div className="p-3 border rounded-lg">
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">Online</div>
+                <div className="font-medium text-emerald-600 dark:text-emerald-400">
+                  {data.counts?.online ?? 0}
+                </div>
+              </div>
+              <div className="p-3 border rounded-lg">
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">
+                  Connecting
+                </div>
+                <div className="font-medium text-amber-600 dark:text-amber-400">
+                  {data.counts?.connecting ?? 0}
+                </div>
+              </div>
+              <div className="p-3 border rounded-lg">
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">Offline</div>
+                <div className="font-medium text-destructive">{data.counts?.offline ?? 0}</div>
+              </div>
+            </div>
+
+            {data.cameras && data.cameras.length > 0 ? (
+              <div className="border rounded-lg divide-y">
+                {data.cameras.map((cam) => (
+                  <div
+                    key={cam.cameraId}
+                    className="flex items-center justify-between gap-3 p-3 text-sm"
+                    data-testid={`supervisor-camera-${cam.cameraId}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <StateIcon state={cam.state} />
+                      <div className="font-mono text-xs truncate">{cam.cameraId}</div>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+                      <span className={stateBadgeClass(cam.state)}>{cam.state}</span>
+                      <span>circuit: {cam.circuit}</span>
+                      <span>fails: {cam.failures}</span>
+                      <span>last ok: {formatRelative(cam.lastSuccessAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                Supervisor is running but has no cameras registered yet. Add a camera with a
+                supported source type (e.g. RTSP) to see it appear here.
+              </div>
+            )}
           </div>
         )}
       </CardContent>
