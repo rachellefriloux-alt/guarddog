@@ -97,6 +97,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   };
 
+  // Bridge supervisor lifecycle events onto the WebSocket so the Settings
+  // → Camera supervisor panel (and any future per-camera health badges) can
+  // refresh without polling. Only wires up when CAMERA_SUPERVISOR=true; with
+  // the flag off `getCameraSupervisor()` returns null and we silently skip.
+  // Each broadcast carries the cameraId so clients can scope the update.
+  const supervisorForBroadcast = getCameraSupervisor();
+  if (supervisorForBroadcast) {
+    supervisorForBroadcast.on("camera.online", (cameraId: string) => {
+      broadcast({ type: "supervisor_camera_online", cameraId });
+    });
+    supervisorForBroadcast.on("camera.offline", (cameraId: string, reason?: string) => {
+      broadcast({ type: "supervisor_camera_offline", cameraId, reason });
+    });
+    supervisorForBroadcast.on("camera.health", (health: unknown) => {
+      broadcast({ type: "supervisor_camera_health", health });
+    });
+  }
+
   // Authentication routes
   app.get("/api/auth/session", (req, res) => {
     if (req.session?.user) {

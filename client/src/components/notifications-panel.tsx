@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   Bell,
   CheckCircle2,
@@ -17,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useWebSocket } from "@/hooks/use-websocket";
 
 interface NotificationChannel {
   id: string;
@@ -437,6 +439,8 @@ function StateIcon({ state }: { state: SupervisorCameraState }) {
  * panel renders an honest "disabled" state with the exact env var to flip.
  */
 export function SupervisorStatusPanel() {
+  const queryClient = useQueryClient();
+  const { lastMessage } = useWebSocket();
   const { data, isLoading } = useQuery<SupervisorStatus>({
     queryKey: ["/api/supervisor/status"],
     queryFn: async () => {
@@ -447,6 +451,21 @@ export function SupervisorStatusPanel() {
     },
     refetchInterval: 10_000,
   });
+
+  // Push-based refresh: when the server bridges supervisor lifecycle events
+  // onto the WebSocket, invalidate the cached status so the panel reflects
+  // the new state on the next tick instead of waiting for the 10s poll.
+  useEffect(() => {
+    if (!lastMessage) return;
+    const t = lastMessage.type;
+    if (
+      t === "supervisor_camera_online" ||
+      t === "supervisor_camera_offline" ||
+      t === "supervisor_camera_health"
+    ) {
+      queryClient.invalidateQueries({ queryKey: ["/api/supervisor/status"] });
+    }
+  }, [lastMessage, queryClient]);
 
   return (
     <Card>
