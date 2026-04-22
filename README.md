@@ -39,6 +39,18 @@ GuardDog works without an OpenAI key and without a Google Cloud project:
 - **Storage**: Cloud file management with upload/download capabilities
 - **Authentication**: Session-based authentication system
 
+### Phase 1 foundation contracts (single source of truth)
+
+The cross-platform domain contracts that the server, web client, Electron desktop, and the future native mobile app all share live in:
+
+- `shared/contracts.ts` — Zod schemas for `Camera`, `Stream`, `Segment`, `RetentionPolicy`, `StorageTarget`, `Event`, `Detection`, `Alert`, `PushEnvelope`, `User`, `Session`.
+- `shared/alert-rules.ts` — the locked alert matrix (urgent vs. non-urgent, channels, quiet hours, burst escalation) consumed by the alert router.
+- `shared/api-contract.ts` — versioned `/api/v1` prefix and the WebSocket envelope shape (`WsEnvelope` + `WS_TOPIC`).
+- `server/adapters/camera-adapter.ts` — the common `CameraAdapter` interface (`connect` / `describe` / `getStream` / `subscribeEvents` / `health` / `reconnect` / `dispose`) that Ring, eSeeCloud, ONVIF, and generic RTSP integrations implement.
+- `server/config/index.ts` — typed config module with `local` / `hybrid` / `cloud-backup` deployment profiles and Zod-validated retention, alert, AI, and cloud settings.
+
+These are additive — existing services keep working unchanged. New code (camera supervisor, retention engine, alert router, native push service, native mobile app) consumes these contracts directly so every layer speaks the same language.
+
 ## 🚀 Getting Started
 
 **🎯 New to GuardDog?** See the [Quick Start Guide](QUICKSTART.md) for a 5-minute setup!
