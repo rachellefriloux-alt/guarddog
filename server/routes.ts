@@ -18,6 +18,7 @@ import { googleAuthService } from "./services/google-auth-service";
 import { getActiveProvider, analyzeMotion } from "./services/ai-provider-router";
 import { localOcrService } from "./services/local-ocr-service";
 import { getAlertPipeline } from "./services/alert-pipeline";
+import { getCameraSupervisor } from "./adapters/supervisor-bootstrap";
 import { sessionMiddleware } from "./session";
 import { testUrl } from "./services/url-tester";
 import { discoverOnvifDevices } from "./services/onvif-discovery";
@@ -284,6 +285,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       return res.status(500).json({ ok: false, message: (err as Error).message });
     }
+  });
+
+  // ---- Camera supervisor (Phase 2) ---------------------------------------
+  // Surfaces real per-camera reachability: state (online/offline/connecting),
+  // circuit-breaker position, consecutive failures, and the last successful
+  // health probe. Returns 503 when CAMERA_SUPERVISOR is not enabled so the
+  // route is always discoverable but never confusingly silent.
+
+  app.get("/api/supervisor/status", (_req, res) => {
+    const supervisor = getCameraSupervisor();
+    if (!supervisor) {
+      return res.status(503).json({
+        enabled: false,
+        message: "Camera supervisor disabled. Set CAMERA_SUPERVISOR=true to enable.",
+      });
+    }
+    const cameras = supervisor.list();
+    const counts = cameras.reduce(
+      (acc, c) => {
+        acc[c.state] = (acc[c.state] ?? 0) + 1;
+        return acc;
+      },
+      { online: 0, offline: 0, connecting: 0 } as Record<string, number>,
+    );
+    res.json({
+      enabled: true,
+      total: cameras.length,
+      counts,
+      cameras,
+    });
   });
 
   app.post("/api/ai/analyze", async (req, res) => {

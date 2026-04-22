@@ -175,3 +175,39 @@ export async function bootstrapCameraSupervisor(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Singleton accessor
+// ---------------------------------------------------------------------------
+// Routes / event sources need a way to reach the supervisor without taking
+// it as a constructor argument (Express route closures are wired at
+// `registerRoutes` time, before the supervisor exists). Mirror the
+// `getAlertPipeline()` pattern used by the alert pipeline so the access
+// shape is consistent across Phase-2 modules.
+
+let _supervisorInstance: StreamSupervisor | null = null;
+
+/**
+ * Register the supervisor instance so routes can read its state. Idempotent:
+ * the first non-null call wins; subsequent calls are silently ignored to
+ * avoid two competing supervisors fighting over the same camera IDs. Pass
+ * `null` to clear (used by tests + dispose paths).
+ */
+export function setCameraSupervisor(supervisor: StreamSupervisor | null): void {
+  if (supervisor === null) {
+    _supervisorInstance = null;
+    return;
+  }
+  if (_supervisorInstance) return;
+  _supervisorInstance = supervisor;
+}
+
+/** Returns the registered supervisor, or null when CAMERA_SUPERVISOR is off. */
+export function getCameraSupervisor(): StreamSupervisor | null {
+  return _supervisorInstance;
+}
+
+/** Test helper — clears the singleton and any wiring state. */
+export function resetCameraSupervisorForTests(): void {
+  _supervisorInstance = null;
+}

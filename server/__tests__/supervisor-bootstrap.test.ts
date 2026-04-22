@@ -1,7 +1,12 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { bootstrapCameraSupervisor } from "../adapters/supervisor-bootstrap";
+import {
+  bootstrapCameraSupervisor,
+  getCameraSupervisor,
+  resetCameraSupervisorForTests,
+  setCameraSupervisor,
+} from "../adapters/supervisor-bootstrap";
 import type { CameraAdapter } from "../adapters/camera-adapter";
 import type { Camera } from "@shared/schema";
 
@@ -297,5 +302,50 @@ describe("bootstrapCameraSupervisor", () => {
     expect(result.skipped).toEqual([]);
     expect(supervisor.registered).toEqual([]);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/registered=0 skipped=0/));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Singleton accessor (setCameraSupervisor / getCameraSupervisor)
+// ---------------------------------------------------------------------------
+
+describe("camera supervisor singleton", () => {
+  afterEach(() => resetCameraSupervisorForTests());
+
+  it("returns null before any registration", () => {
+    expect(getCameraSupervisor()).toBeNull();
+  });
+
+  it("returns the registered instance after setCameraSupervisor", () => {
+    const sup = new FakeSupervisor();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCameraSupervisor(sup as any);
+    expect(getCameraSupervisor()).toBe(sup);
+  });
+
+  it("first-call-wins: ignores subsequent non-null registrations", () => {
+    const a = new FakeSupervisor();
+    const b = new FakeSupervisor();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCameraSupervisor(a as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCameraSupervisor(b as any);
+    expect(getCameraSupervisor()).toBe(a);
+  });
+
+  it("setCameraSupervisor(null) clears the singleton (test escape hatch)", () => {
+    const sup = new FakeSupervisor();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCameraSupervisor(sup as any);
+    setCameraSupervisor(null);
+    expect(getCameraSupervisor()).toBeNull();
+  });
+
+  it("resetCameraSupervisorForTests clears the singleton", () => {
+    const sup = new FakeSupervisor();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCameraSupervisor(sup as any);
+    resetCameraSupervisorForTests();
+    expect(getCameraSupervisor()).toBeNull();
   });
 });

@@ -18,7 +18,7 @@ import { initAlertPipeline } from "./services/alert-pipeline";
 import { loadConfig } from "./config";
 import { sessionMiddleware } from "./session";
 import { StreamSupervisor } from "./adapters/stream-supervisor";
-import { bootstrapCameraSupervisor } from "./adapters/supervisor-bootstrap";
+import { bootstrapCameraSupervisor, setCameraSupervisor } from "./adapters/supervisor-bootstrap";
 import { storage } from "./storage";
 
 // Environment validation
@@ -262,6 +262,7 @@ app.use((req, res, next) => {
           supervisor,
           router: alertRouterRef?.router,
         });
+        setCameraSupervisor(supervisor);
         console.log(
           `🛰️  Camera supervisor started (registered=${result.registered.length}, skipped=${result.skipped.length})`,
         );
