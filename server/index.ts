@@ -17,6 +17,9 @@ import { getActiveProvider } from "./services/ai-provider-router";
 import { initAlertPipeline } from "./services/alert-pipeline";
 import { loadConfig } from "./config";
 import { sessionMiddleware } from "./session";
+import { StreamSupervisor } from "./adapters/stream-supervisor";
+import { bootstrapCameraSupervisor } from "./adapters/supervisor-bootstrap";
+import { storage } from "./storage";
 
 // Environment validation
 function validateEnvironment() {
@@ -230,10 +233,12 @@ app.use((req, res, next) => {
     // deployments are untouched. When enabled, detection sources (MQTT
     // bridge today; camera-service / supervisor in future PRs) feed events
     // into the matrix-driven router → dispatcher → digest mailer chain.
+    let alertRouterRef: ReturnType<typeof initAlertPipeline> = null;
     try {
       const cfg = loadConfig();
       const pipeline = initAlertPipeline(cfg);
       if (pipeline) {
+        alertRouterRef = pipeline;
         console.log(
           `🚨 Alert pipeline started (digest every ${cfg.alerts.digest.intervalHours}h, ` +
             `sender=${process.env.DIGEST_WEBHOOK_URL ? "webhook" : "noop"})`,
@@ -241,6 +246,28 @@ app.use((req, res, next) => {
       }
     } catch (err) {
       console.warn("Alert pipeline init failed; continuing without it:", err);
+    }
+
+    // Phase 2 camera supervisor. Opt-in via CAMERA_SUPERVISOR=true. When
+    // enabled, every camera in `storage` is wrapped in a `CameraAdapter` and
+    // registered with a `StreamSupervisor` that probes reachability,
+    // applies backoff/circuit-breaker, and (if the alert pipeline is also
+    // running) emits `camera-online` / `camera-offline` events into the
+    // alert router. Off by default — existing deployments are unaffected.
+    if ((process.env.CAMERA_SUPERVISOR ?? "").toLowerCase() === "true") {
+      try {
+        const supervisor = new StreamSupervisor();
+        const result = await bootstrapCameraSupervisor({
+          store: storage,
+          supervisor,
+          router: alertRouterRef?.router,
+        });
+        console.log(
+          `🛰️  Camera supervisor started (registered=${result.registered.length}, skipped=${result.skipped.length})`,
+        );
+      } catch (err) {
+        console.warn("Camera supervisor init failed; continuing without it:", err);
+      }
     }
 
     const server = await registerRoutes(app);
