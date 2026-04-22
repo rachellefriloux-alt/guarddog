@@ -4,6 +4,7 @@ import { streamService } from "./stream-service";
 import { fileStorageService } from "./file-storage-service";
 import { ringAuthService } from "./ring-auth-service";
 import { notificationService } from "./notification-service";
+import { detectionToRouterEvent, getAlertPipeline } from "./alert-pipeline";
 import { type Camera, type InsertDetection } from "@shared/schema";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
@@ -133,6 +134,17 @@ export class CameraService {
                 meta: { cameraId, type: result.type, confidence: result.confidence },
               })
               .catch((err) => console.error('[CameraService] notification send failed:', err));
+          }
+
+          // Phase 2: also feed the alert pipeline. No-op when disabled.
+          const pipeline = getAlertPipeline();
+          if (pipeline) {
+            const event = detectionToRouterEvent({
+              cameraId,
+              type: result.type,
+              description: result.description,
+            });
+            if (event) pipeline.ingest(event);
           }
         }
       }

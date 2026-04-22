@@ -17,6 +17,7 @@ import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 import { googleAuthService } from "./services/google-auth-service";
 import { getActiveProvider, analyzeMotion } from "./services/ai-provider-router";
 import { localOcrService } from "./services/local-ocr-service";
+import { getAlertPipeline } from "./services/alert-pipeline";
 import { sessionMiddleware } from "./session";
 import { testUrl } from "./services/url-tester";
 import { discoverOnvifDevices } from "./services/onvif-discovery";
@@ -239,6 +240,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err) {
       res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // ---- Alert pipeline (Phase 2) ------------------------------------------
+  // These endpoints expose the running AlertPipeline. They return 503 when
+  // ALERTS_PIPELINE is not enabled, so the routes are always discoverable
+  // but never confusingly silent.
+
+  app.get("/api/alerts/status", (_req, res) => {
+    const pipeline = getAlertPipeline();
+    if (!pipeline) {
+      return res.status(503).json({
+        enabled: false,
+        message: "Alert pipeline disabled. Set ALERTS_PIPELINE=true to enable.",
+      });
+    }
+    res.json({
+      enabled: true,
+      digestIntervalMs: pipeline.mailer.getIntervalMs(),
+      digestQueue: pipeline.dispatcher.getDigestSnapshot(),
+      lastDispatch: pipeline.getLastDispatch(),
+      lastDigestFailure: pipeline.mailer.lastFailure
+        ? {
+            at: pipeline.mailer.lastFailure.at,
+            totalAlerts: pipeline.mailer.lastFailure.payload.totalAlerts,
+          }
+        : null,
+    });
+  });
+
+  app.post("/api/alerts/digest/flush", async (_req, res) => {
+    const pipeline = getAlertPipeline();
+    if (!pipeline) {
+      return res.status(503).json({
+        ok: false,
+        message: "Alert pipeline disabled. Set ALERTS_PIPELINE=true to enable.",
+      });
+    }
+    try {
+      const result = await pipeline.flushDigestNow();
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ ok: false, message: (err as Error).message });
     }
   });
 

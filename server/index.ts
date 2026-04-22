@@ -14,6 +14,8 @@ import { sovereignRecorder, loadStreamsFromFile } from "./services/sovereign-rec
 import { fileStorageService } from "./services/file-storage-service";
 import { mqttEventsBridge } from "./services/mqtt-events-bridge";
 import { getActiveProvider } from "./services/ai-provider-router";
+import { initAlertPipeline } from "./services/alert-pipeline";
+import { loadConfig } from "./config";
 import { sessionMiddleware } from "./session";
 
 // Environment validation
@@ -222,6 +224,23 @@ app.use((req, res, next) => {
     if (mqttEventsBridge.isConfigured()) {
       console.log('📡 Starting MQTT events bridge...');
       mqttEventsBridge.start();
+    }
+
+    // Phase 2 alert pipeline. Opt-in via ALERTS_PIPELINE=true so existing
+    // deployments are untouched. When enabled, detection sources (MQTT
+    // bridge today; camera-service / supervisor in future PRs) feed events
+    // into the matrix-driven router → dispatcher → digest mailer chain.
+    try {
+      const cfg = loadConfig();
+      const pipeline = initAlertPipeline(cfg);
+      if (pipeline) {
+        console.log(
+          `🚨 Alert pipeline started (digest every ${cfg.alerts.digest.intervalHours}h, ` +
+            `sender=${process.env.DIGEST_WEBHOOK_URL ? "webhook" : "noop"})`,
+        );
+      }
+    } catch (err) {
+      console.warn("Alert pipeline init failed; continuing without it:", err);
     }
 
     const server = await registerRoutes(app);
