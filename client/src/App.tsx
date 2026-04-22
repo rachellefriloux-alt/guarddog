@@ -12,6 +12,7 @@ import AIDetection from "@/pages/ai-detection";
 import Alerts from "@/pages/alerts";
 import Settings from "@/pages/settings";
 import Diagnostics from "@/pages/diagnostics";
+import ParityDashboard from "@/pages/parity-dashboard";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { LoginScreen } from "@/components/login-screen";
@@ -32,6 +33,7 @@ function Router() {
       <Route path="/alerts" component={Alerts} />
       <Route path="/settings" component={Settings} />
       <Route path="/diagnostics" component={Diagnostics} />
+      <Route path="/parity-dashboard" component={ParityDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

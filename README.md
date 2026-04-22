@@ -12,6 +12,7 @@ A comprehensive Web-based IP camera surveillance dashboard that unifies Ring doo
 - **Cloud Storage**: Google Drive integration for video/image storage (15GB free)
 - **Real-Time Alerts**: WebSocket-powered live notifications and status updates
 - **Recognition System**: In-memory recognition data for people, animals, and vehicles
+- **Parity Dashboard**: Tracks combined eSeeCloud + Ring capability parity with Must/Should/Later priorities and phase rollout status
 - **Dark Mode Support**: Complete dark/light theme with persistence
 - **Responsive Design**: Modern UI built with React and Tailwind CSS
 - **Export Reports**: Daily summary reports in HTML/CSV formats
