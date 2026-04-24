@@ -1,4 +1,4 @@
-import { Shield, Grid, Video, PlayCircle, Cloud, Brain, Bell, Settings, Stethoscope, Layers } from 'lucide-react';
+import { Shield, Grid, Video, PlayCircle, Cloud, Brain, Bell, Settings, Stethoscope, Layers, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLocation } from 'wouter';
 
@@ -13,6 +13,7 @@ export default function Sidebar() {
     { icon: Brain, label: 'AI Detection', path: '/ai-detection', count: null },
     { icon: Layers, label: 'Parity Dashboard', path: '/parity-dashboard', count: null },
     { icon: Bell, label: 'Alerts', path: '/alerts', count: null },
+    { icon: Clock, label: 'Timeline', path: '/events', count: null },
     { icon: Settings, label: 'Settings', path: '/settings', count: null },
     { icon: Stethoscope, label: 'Diagnostics', path: '/diagnostics', count: null },
   ];

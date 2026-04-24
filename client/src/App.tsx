@@ -10,6 +10,7 @@ import Recordings from "@/pages/recordings";
 import CloudStorage from "@/pages/cloud-storage";
 import AIDetection from "@/pages/ai-detection";
 import Alerts from "@/pages/alerts";
+import EventsPage from "@/pages/events";
 import Settings from "@/pages/settings";
 import Diagnostics from "@/pages/diagnostics";
 import ParityDashboard from "@/pages/parity-dashboard";
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/cloud-storage" component={CloudStorage} />
       <Route path="/ai-detection" component={AIDetection} />
       <Route path="/alerts" component={Alerts} />
+      <Route path="/events" component={EventsPage} />
       <Route path="/settings" component={Settings} />
       <Route path="/diagnostics" component={Diagnostics} />
       <Route path="/parity-dashboard" component={ParityDashboard} />
