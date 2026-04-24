@@ -16,8 +16,10 @@ interface CameraHealth {
 export class StreamSupervisorService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(StreamSupervisorService.name);
 
-  // Health state per camera (plain-object map to match the StreamsService style)
-  private health: { [cameraId: string]: CameraHealth } = {};
+  // Health state per camera. Use a null-prototype object so that a malicious
+  // cameraId like "__proto__" cannot pollute Object.prototype via the
+  // `this.health[cameraId] = ...` assignments below.
+  private health: { [cameraId: string]: CameraHealth } = Object.create(null);
 
   private intervalHandle: NodeJS.Timeout | null = null;
 
@@ -51,6 +53,12 @@ export class StreamSupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   private ensureHealth(cameraId: string): CameraHealth {
+    // Reject ids that don't match the safe character set so we never write a
+    // key like "__proto__" / "constructor" into the health map even though it
+    // is a null-prototype object.
+    if (!StreamsService.isSafeId(cameraId)) {
+      throw new Error('Invalid cameraId');
+    }
     if (!this.health[cameraId]) {
       this.health[cameraId] = {
         isHealthy: true,
@@ -84,12 +92,21 @@ export class StreamSupervisorService implements OnModuleInit, OnModuleDestroy {
       // If no new segment in 10 seconds → restart
       if (age > 10000) {
         this.log.warn(`Stream stalled for ${cameraId}, restarting…`);
-        this.streams.stop(cameraId);
-        this.streams.start(cameraId, null); // StreamsService will reuse existing URL
-        h.lastRestartTime = now;
-        h.restartCount += 1;
-        h.isHealthy = false;
-        h.reason = 'Stalled stream (no new segments)';
+        try {
+          this.streams.stop(cameraId);
+          this.streams.start(cameraId, null); // StreamsService will reuse existing URL
+          h.lastRestartTime = now;
+          h.restartCount += 1;
+          h.isHealthy = false;
+          h.reason = 'Stalled stream (no new segments)';
+        } catch (err) {
+          // Never let a restart failure kill the supervisor interval.
+          this.log.error(
+            `Auto-restart failed for ${cameraId}: ${(err as Error).message}`,
+          );
+          h.isHealthy = false;
+          h.reason = `Auto-restart failed: ${(err as Error).message}`;
+        }
         continue;
       }
 
@@ -105,12 +122,19 @@ export class StreamSupervisorService implements OnModuleInit, OnModuleDestroy {
 
   restart(cameraId: string) {
     const h = this.ensureHealth(cameraId);
-    this.streams.stop(cameraId);
-    this.streams.start(cameraId, null);
-    h.lastRestartTime = Date.now();
-    h.restartCount += 1;
-    h.isHealthy = true;
-    h.reason = 'Manual restart';
-    return { ok: true };
+    try {
+      this.streams.stop(cameraId);
+      this.streams.start(cameraId, null);
+      h.lastRestartTime = Date.now();
+      h.restartCount += 1;
+      h.isHealthy = true;
+      h.reason = 'Manual restart';
+      return { ok: true };
+    } catch (err) {
+      const message = (err as Error).message;
+      h.isHealthy = false;
+      h.reason = `Manual restart failed: ${message}`;
+      return { ok: false, error: message };
+    }
   }
 }

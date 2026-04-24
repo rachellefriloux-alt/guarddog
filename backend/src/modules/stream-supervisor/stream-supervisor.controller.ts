@@ -1,5 +1,5 @@
 // backend/src/modules/stream-supervisor/stream-supervisor.controller.ts
-import { Controller, Get, Post, Param } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Post } from '@nestjs/common';
 import { StreamSupervisorService } from './stream-supervisor.service';
 
 @Controller('api/stream-health')
@@ -13,6 +13,11 @@ export class StreamSupervisorController {
 
   @Post(':id/restart')
   restart(@Param('id') id: string) {
-    return this.sup.restart(id);
+    try {
+      return this.sup.restart(id);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
   }
 }
+

@@ -84,6 +84,11 @@ export class StreamsService implements OnModuleDestroy {
       return this.getPublicUrl(cameraId);
     }
 
+    // Re-assert the cameraId sanitizer immediately before the path is built so
+    // CodeQL's js/path-injection flow recognizes the guard in the same scope.
+    if (!StreamsService.SAFE_ID.test(cameraId)) {
+      throw new Error('Invalid cameraId');
+    }
     const outDir = join(process.cwd(), 'hls', cameraId);
     mkdirSync(outDir, { recursive: true });
 
