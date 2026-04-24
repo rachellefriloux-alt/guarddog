@@ -3,12 +3,20 @@ import { RingRestClient } from 'ring-client-api/rest-client';
 import fs from 'fs-extra';
 import path from 'path';
 import crypto from 'crypto';
+import { RingDirectStreamer, type RingCameraLike } from './ring-direct-streamer';
 
 export class RingAuthService {
   private ringApi: RingApi | null = null;
   private isAuthenticated = false;
   private credentials: { email?: string; refreshToken?: string } | null = null;
   private credentialsPath = path.join(process.cwd(), 'storage', 'ring-credentials.json');
+  /**
+   * Lazily-created live-HLS streamer. Owns one in-process WebRTC->HLS pipeline
+   * per deviceId so we can serve Ring cameras directly without an external
+   * `ring-mqtt` bridge. Created on first `startLiveStream()` call so the
+   * service still imports cleanly when Ring isn't configured.
+   */
+  private liveStreamer: RingDirectStreamer | null = null;
   private pendingAuthentications = new Map<string, {
     restClient: RingRestClient;
     email: string;
@@ -251,6 +259,14 @@ export class RingAuthService {
 
   async disconnect(): Promise<void> {
     try {
+      // Tear down any live HLS sessions BEFORE clearing the API handle so
+      // they can stop cleanly. After this the streamer is reset; the next
+      // sign-in will lazily build a fresh one bound to the new RingApi.
+      if (this.liveStreamer) {
+        await this.liveStreamer.stopAll();
+        this.liveStreamer = null;
+      }
+
       this.ringApi = null;
       this.isAuthenticated = false;
       this.credentials = null;
@@ -352,33 +368,50 @@ export class RingAuthService {
     }
 
     try {
-      const locations = await this.ringApi.getLocations();
-      
-      for (const location of locations) {
-        const camera = location.cameras.find(c => c.id.toString() === deviceId);
-        if (camera) {
-          const sipSession = await camera.streamVideo({
-            output: [
-              '-preset', 'veryfast',
-              '-g', '25',
-              '-sc_threshold', '0',
-              '-f', 'hls',
-              '-hls_time', '2',
-              '-hls_list_size', '3',
-              '-hls_flags', 'delete_segments'
-            ]
-          });
-
-          // Return the HLS playlist URL
-          return `/api/stream/ring/${deviceId}/playlist.m3u8`;
-        }
-      }
-
-      throw new Error('Camera not found');
+      const handle = await this.getLiveStreamer().start(deviceId);
+      return handle.hlsUrl;
     } catch (error) {
-      console.error(`Error starting live stream for device ${deviceId}:`, error);
+      console.error('Error starting live stream for device %s:', deviceId, error);
       return null;
     }
+  }
+
+  /**
+   * Stop the live HLS session for a Ring device. Safe to call when nothing
+   * is streaming for that id — it's a no-op.
+   */
+  async stopLiveStream(deviceId: string): Promise<void> {
+    if (!this.liveStreamer) return;
+    await this.liveStreamer.stop(deviceId);
+  }
+
+  /** deviceIds with an active in-process HLS session right now. */
+  activeLiveStreams(): string[] {
+    return this.liveStreamer?.active() ?? [];
+  }
+
+  /**
+   * Lazily build (and cache) the per-process streamer. Constructed only
+   * when a caller actually asks for a live stream so the service still
+   * imports cleanly in environments where Ring is never used.
+   */
+  private getLiveStreamer(): RingDirectStreamer {
+    if (this.liveStreamer) return this.liveStreamer;
+    this.liveStreamer = new RingDirectStreamer({
+      hlsRoot: path.join(process.cwd(), 'recordings'),
+      resolveCamera: async (id) => this.resolveCamera(id),
+    });
+    return this.liveStreamer;
+  }
+
+  private async resolveCamera(deviceId: string): Promise<RingCameraLike | null> {
+    if (!this.isAuthenticated || !this.ringApi) return null;
+    const locations = await this.ringApi.getLocations();
+    for (const location of locations) {
+      const camera = location.cameras.find((c) => c.id.toString() === deviceId);
+      if (camera) return camera as unknown as RingCameraLike;
+    }
+    return null;
   }
 
   async getRecordings(deviceId: string, limit: number = 10): Promise<any[]> {

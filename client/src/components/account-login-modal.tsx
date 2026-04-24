@@ -266,6 +266,36 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
     }
   };
 
+  const handleVendorSync = async (vendor: "ring" | "esee") => {
+    try {
+      setLoading(true);
+      const path = vendor === "ring" ? "/api/ring/sync" : "/api/esee-cameras/sync";
+      const res = await apiRequest("POST", path);
+      const report = await res.json();
+      if (report.vendorReady === false) {
+        toast({
+          title: "Nothing to import",
+          description: report.advisory ?? "Connect the vendor account first.",
+        });
+        return;
+      }
+      toast({
+        title: `Imported ${report.imported?.length ?? 0} ${vendor === "ring" ? "Ring" : "eSeeCloud"} camera(s)`,
+        description:
+          (report.advisory ? `${report.advisory} ` : "") +
+          "They'll show up on the Dashboard tile grid.",
+      });
+    } catch (err) {
+      toast({
+        title: "Import failed",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDisconnectService = async (service: keyof ConnectionStatus) => {
     try {
       setLoading(true);
@@ -450,13 +480,24 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                 {connectionStatus.ring === 'connected' ? (
                   <div className="space-y-3">
                     <p className="text-sm text-success">✓ Ring account is connected{ringAccountEmail ? ` (${ringAccountEmail})` : ''}</p>
-                    <Button
-                      onClick={() => handleDisconnectService('ring')}
-                      variant="outline"
-                      disabled={loading}
-                    >
-                      Disconnect Ring Account
-                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Importing pulls every Ring camera into the GuardDog dashboard so you can view the live feeds here instead of in the Ring app. Live streaming runs in-process via Ring's official API — no extra bridge process required.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handleVendorSync('ring')}
+                        disabled={loading}
+                      >
+                        Import Ring cameras
+                      </Button>
+                      <Button
+                        onClick={() => handleDisconnectService('ring')}
+                        variant="outline"
+                        disabled={loading}
+                      >
+                        Disconnect Ring Account
+                      </Button>
+                    </div>
                   </div>
                 ) : ringTwoFactor.pendingAuthId ? (
                   <div className="space-y-4">
@@ -617,13 +658,24 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                 {connectionStatus.eseeCloud === 'connected' ? (
                   <div className="space-y-3">
                     <p className="text-sm text-success">✓ ESEE Cloud account is connected and ready</p>
-                    <Button
-                      onClick={() => handleDisconnectService('eseeCloud')}
-                      variant="outline"
-                      disabled={loading}
-                    >
-                      Disconnect ESEE Cloud
-                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Importing pulls every eSeeCloud camera into the GuardDog dashboard so you can view the live feeds here instead of in the eSee desktop app.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handleVendorSync('esee')}
+                        disabled={loading}
+                      >
+                        Import eSeeCloud cameras
+                      </Button>
+                      <Button
+                        onClick={() => handleDisconnectService('eseeCloud')}
+                        variant="outline"
+                        disabled={loading}
+                      >
+                        Disconnect ESEE Cloud
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">

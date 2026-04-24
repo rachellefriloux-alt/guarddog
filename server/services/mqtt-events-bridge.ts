@@ -20,6 +20,7 @@
 import mqtt, { type MqttClient } from "mqtt";
 import { storage } from "../storage";
 import { notificationService } from "./notification-service";
+import { detectionToRouterEvent, getAlertPipeline } from "./alert-pipeline";
 
 export interface MqttBridgeOptions {
   url?: string;
@@ -155,6 +156,20 @@ export class MqttEventsBridge {
         metadata: { classification: label },
       });
       console.log(`[MQTT] Recorded ${label} on ${cameraId} (${(confidence * 100).toFixed(0)}%)`);
+
+      // Phase 2: also feed the alert pipeline (matrix-driven routing, burst
+      // escalation, quiet hours, digest). No-op when the pipeline isn't
+      // enabled (ALERTS_PIPELINE != "true"), so the legacy notification
+      // fan-out below remains the sole delivery path for existing setups.
+      const pipeline = getAlertPipeline();
+      if (pipeline) {
+        const event = detectionToRouterEvent({
+          cameraId,
+          type: classifyLabel(label),
+          description: `${label} detected (${(confidence * 100).toFixed(0)}%)`,
+        });
+        if (event) pipeline.ingest(event);
+      }
 
       // Fan out to enabled notification sinks (ntfy / Discord / Pushover /
       // generic webhook). All sinks no-op when nothing is configured, so

@@ -1,4 +1,6 @@
 import type { Express } from "express";
+import express from "express";
+import { timingSafeEqual } from "crypto";
 import { createServer, type Server, type IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
@@ -17,13 +19,18 @@ import { insertCameraSchema, insertCloudFileSchema } from "@shared/schema";
 import { googleAuthService } from "./services/google-auth-service";
 import { getActiveProvider, analyzeMotion } from "./services/ai-provider-router";
 import { localOcrService } from "./services/local-ocr-service";
+import { getAlertPipeline } from "./services/alert-pipeline";
+import { getCameraSupervisor } from "./adapters/supervisor-bootstrap";
 import { sessionMiddleware } from "./session";
-import { testUrl } from "./services/url-tester";
+import { testUrl, snapshotFromUrl, redactUrl } from "./services/url-tester";
 import { discoverOnvifDevices } from "./services/onvif-discovery";
+import { syncRingCameras, syncEseeCameras } from "./services/vendor-sync";
 import { cameraPresets } from "./services/camera-presets";
 import { sovereignRecorder } from "./services/sovereign-recorder";
 import { runDiagnostics } from "./services/diagnostics";
 import { auditLog } from "./services/audit-log";
+import { getFrameStore, isValidCameraId } from "./services/frame-store";
+import { getEseeCloudAdapter } from "./adapters/eseecloud/eseecloud.adapter";
 import { notificationService } from "./services/notification-service";
 import { mintShareToken, verifyShareToken } from "./services/clip-share";
 import { parseSmartRule, ruleMatches, type SmartRule } from "./services/smart-filter";
@@ -94,6 +101,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
   };
+
+  // Bridge supervisor lifecycle events onto the WebSocket so the Settings
+  // → Camera supervisor panel (and any future per-camera health badges) can
+  // refresh without polling. Only wires up when CAMERA_SUPERVISOR=true; with
+  // the flag off `getCameraSupervisor()` returns null and we silently skip.
+  // Each broadcast carries the cameraId so clients can scope the update.
+  const supervisorForBroadcast = getCameraSupervisor();
+  if (supervisorForBroadcast) {
+    supervisorForBroadcast.on("camera.online", (cameraId: string) => {
+      broadcast({ type: "supervisor_camera_online", cameraId });
+    });
+    supervisorForBroadcast.on("camera.offline", (cameraId: string, reason?: string) => {
+      broadcast({ type: "supervisor_camera_offline", cameraId, reason });
+    });
+    supervisorForBroadcast.on("camera.health", (health: unknown) => {
+      broadcast({ type: "supervisor_camera_health", health });
+    });
+  }
 
   // Authentication routes
   app.get("/api/auth/session", (req, res) => {
@@ -213,6 +238,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return next();
     }
 
+    // Capture-agent ingest (EseeCloud adapter pushing window-region frames):
+    // POST /api/internal/devices/:id/frame is authenticated by a shared
+    // secret in the `x-capture-agent-key` header inside the route handler,
+    // not by user session. See ARCHITECTURE.md "INTERNAL API".
+    if (
+      req.method === "POST" &&
+      /^\/api\/internal\/devices\/[A-Za-z0-9_.-]{1,64}\/frame\/?$/.test(req.path)
+    ) {
+      return next();
+    }
+
     if (req.session?.user) {
       return next();
     }
@@ -240,6 +276,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       res.status(500).json({ message: (err as Error).message });
     }
+  });
+
+  // ---- Alert pipeline (Phase 2) ------------------------------------------
+  // These endpoints expose the running AlertPipeline. They return 503 when
+  // ALERTS_PIPELINE is not enabled, so the routes are always discoverable
+  // but never confusingly silent.
+
+  app.get("/api/alerts/status", (_req, res) => {
+    const pipeline = getAlertPipeline();
+    if (!pipeline) {
+      return res.status(503).json({
+        enabled: false,
+        message: "Alert pipeline disabled. Set ALERTS_PIPELINE=true to enable.",
+      });
+    }
+    res.json({
+      enabled: true,
+      digestIntervalMs: pipeline.mailer.getIntervalMs(),
+      digestQueue: pipeline.dispatcher.getDigestSnapshot(),
+      lastDispatch: pipeline.getLastDispatch(),
+      lastDigestFailure: pipeline.mailer.lastFailure
+        ? {
+            at: pipeline.mailer.lastFailure.at,
+            totalAlerts: pipeline.mailer.lastFailure.payload.totalAlerts,
+          }
+        : null,
+    });
+  });
+
+  app.post("/api/alerts/digest/flush", async (_req, res) => {
+    const pipeline = getAlertPipeline();
+    if (!pipeline) {
+      return res.status(503).json({
+        ok: false,
+        message: "Alert pipeline disabled. Set ALERTS_PIPELINE=true to enable.",
+      });
+    }
+    try {
+      const result = await pipeline.flushDigestNow();
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ ok: false, message: (err as Error).message });
+    }
+  });
+
+  // ---- Camera supervisor (Phase 2) ---------------------------------------
+  // Surfaces real per-camera reachability: state (online/offline/connecting),
+  // circuit-breaker position, consecutive failures, and the last successful
+  // health probe. Returns 503 when CAMERA_SUPERVISOR is not enabled so the
+  // route is always discoverable but never confusingly silent.
+
+  app.get("/api/supervisor/status", (_req, res) => {
+    const supervisor = getCameraSupervisor();
+    if (!supervisor) {
+      return res.status(503).json({
+        enabled: false,
+        message: "Camera supervisor disabled. Set CAMERA_SUPERVISOR=true to enable.",
+      });
+    }
+    const cameras = supervisor.list();
+    const counts = cameras.reduce(
+      (acc, c) => {
+        acc[c.state] = (acc[c.state] ?? 0) + 1;
+        return acc;
+      },
+      { online: 0, offline: 0, connecting: 0 } as Record<string, number>,
+    );
+    res.json({
+      enabled: true,
+      total: cameras.length,
+      counts,
+      cameras,
+    });
   });
 
   app.post("/api/ai/analyze", async (req, res) => {
@@ -285,13 +394,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Body must include a 'url' string." });
       }
       const result = await testUrl({ url, username, password });
+      const safeUrl = redactUrl(url);
       auditLog.record({
         event: "camera.test_url",
-        detail: `${url} → ${result.ok ? "ok" : `error: ${result.error ?? "unknown"}`}`,
+        detail: `${safeUrl} → ${result.ok ? "ok" : `error: ${result.error ?? "unknown"}`}`,
         user: req.session?.user?.email,
         ip: req.ip,
       });
       res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // Grab a single JPEG frame from an RTSP/HTTP URL so the onboarding wizard
+  // can show the operator a live picture before saving the camera. Returns
+  // either `image/jpeg` bytes (200) or `{ message }` JSON (4xx/5xx). Bounded
+  // and credential-injected the same way as `/test-url`; the audit-log entry
+  // intentionally omits credentials.
+  app.post("/api/cameras/snapshot-url", async (req, res) => {
+    try {
+      const { url, username, password } = req.body || {};
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ message: "Body must include a 'url' string." });
+      }
+      const result = await snapshotFromUrl({ url, username, password });
+      const safeUrl = redactUrl(url);
+      auditLog.record({
+        event: "camera.snapshot_url",
+        detail: `${safeUrl} → ${result.ok ? `ok (${result.image?.length ?? 0} bytes)` : `error: ${result.error ?? "unknown"}`}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      if (!result.ok || !result.image) {
+        return res.status(502).json({ message: result.error ?? "Snapshot failed." });
+      }
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(result.image);
     } catch (err) {
       res.status(500).json({ message: (err as Error).message });
     }
@@ -578,6 +718,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.sendFile(filePath);
     } catch (error) {
       res.status(500).json({ message: "Failed to serve stream file" });
+    }
+  });
+
+  // Ring HLS streaming — served from per-device dirs created by
+  // `RingDirectStreamer`. `deviceId` and `filename` are both whitelisted
+  // AND we verify the resolved path is still inside the recordings root,
+  // so a hostile client can't escape with `../` segments or NUL bytes.
+  app.get("/api/stream/ring/:deviceId/:filename", async (req, res) => {
+    const { deviceId, filename } = req.params;
+    if (!/^[A-Za-z0-9_]{1,64}$/.test(deviceId)) {
+      return res.status(400).json({ message: "Invalid deviceId" });
+    }
+    if (filename !== "playlist.m3u8" && !/^segment_[0-9]{5}\.ts$/.test(filename)) {
+      return res.status(400).json({ message: "Invalid filename" });
+    }
+    // Belt-and-braces: even though both inputs are regex-whitelisted,
+    // strip any directory components and require the resolved path stays
+    // under the recordings root.
+    const safeFilename = path.basename(filename);
+    const safeDeviceId = path.basename(deviceId);
+    const recordingsRoot = path.resolve(process.cwd(), "recordings");
+    const filePath = path.resolve(recordingsRoot, `ring_${safeDeviceId}`, safeFilename);
+    if (!filePath.startsWith(recordingsRoot + path.sep)) {
+      return res.status(400).json({ message: "Invalid path" });
+    }
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: "Stream file not found" });
+    }
+    if (safeFilename.endsWith(".m3u8")) {
+      res.set("Content-Type", "application/vnd.apple.mpegurl");
+      res.set("Cache-Control", "no-cache");
+    } else {
+      res.set("Content-Type", "video/mp2t");
+    }
+    res.sendFile(filePath);
+  });
+
+  // Start the in-process Ring -> HLS pipeline for a device. Returns the
+  // playlist URL the client should hand to its HLS player. Idempotent —
+  // re-calling for an already-streaming device returns the existing URL
+  // instead of opening a second WebRTC session against Ring.
+  app.post("/api/ring/devices/:deviceId/start-stream", async (req, res) => {
+    try {
+      const hlsUrl = await ringAuthService.startLiveStream(req.params.deviceId);
+      if (!hlsUrl) return res.status(502).json({ message: "Failed to start Ring live stream" });
+      auditLog.record({
+        event: "ring.live_start",
+        detail: req.params.deviceId,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.json({ hlsUrl });
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
+    }
+  });
+
+  app.post("/api/ring/devices/:deviceId/stop-stream", async (req, res) => {
+    try {
+      await ringAuthService.stopLiveStream(req.params.deviceId);
+      auditLog.record({
+        event: "ring.live_stop",
+        detail: req.params.deviceId,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
     }
   });
 
@@ -879,6 +1088,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Mirror authenticated Ring devices into the unified `storage.cameras`
+  // collection so they render in the dashboard tile grid and stream through
+  // the same HLS pipeline as generic RTSP cameras. Idempotent — re-running
+  // upserts existing rows by deterministic id (`ring_<deviceId>`). The body
+  // is empty; pass `{ "ringRtspBaseUrl": "rtsp://..." }` to override the
+  // bridge host.
+  app.post("/api/ring/sync", async (req, res) => {
+    try {
+      const ringRtspBaseUrl =
+        typeof req.body?.ringRtspBaseUrl === "string" ? req.body.ringRtspBaseUrl : undefined;
+      const report = await syncRingCameras(ringAuthService, storage, { ringRtspBaseUrl });
+      auditLog.record({
+        event: "camera.vendor_sync",
+        detail: `ring → imported=${report.imported.length} skipped=${report.skipped.length}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      // Tell the dashboard to refresh its `/api/cameras` cache.
+      if (report.imported.length > 0) {
+        broadcast({ type: "vendor_cameras_synced", vendor: "ring", count: report.imported.length });
+      }
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
+    }
+  });
+
+  // Same as /api/ring/sync, but for eSeeCloud cameras.
+  app.post("/api/esee-cameras/sync", async (req, res) => {
+    try {
+      const report = await syncEseeCameras(eseeCloudService, storage);
+      auditLog.record({
+        event: "camera.vendor_sync",
+        detail: `esee → imported=${report.imported.length} skipped=${report.skipped.length}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      if (report.imported.length > 0) {
+        broadcast({ type: "vendor_cameras_synced", vendor: "esee", count: report.imported.length });
+      }
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
+    }
+  });
+
   // ESEE Camera management routes
   app.get("/api/esee-cameras/status", async (req, res) => {
     try {
@@ -1152,6 +1407,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ message: "Failed to get recognition events" });
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Internal device frame buffer  —  ARCHITECTURE.md "INTERNAL API" + Phase 2
+  // ---------------------------------------------------------------------------
+  // The C90 cameras are P2P-only and not directly reachable from this process.
+  // A small capture agent running alongside the official EseeCloud desktop app
+  // on the mini-PC grabs window-region JPEGs and POSTs them to the ingest
+  // endpoint below. The AI service (Sallie) and debug clients then pull the
+  // latest frame back via the GET endpoint. Everything goes through the
+  // `EseeCloudAdapter` interface so Phase 5's real-screen-capture
+  // implementation can drop-in replace this stub.
+  const frameStore = getFrameStore();
+  const frameRawParser = express.raw({
+    type: ["image/jpeg", "image/jpg"],
+    limit: frameStore.maxBytes,
+  });
+
+  app.post(
+    "/api/internal/devices/:deviceId/frame",
+    frameRawParser,
+    (req, res) => {
+      const expectedKey = process.env.ESEE_CAPTURE_AGENT_KEY;
+      if (!expectedKey) {
+        return res.status(503).json({
+          message:
+            "Capture-agent ingest disabled (set ESEE_CAPTURE_AGENT_KEY to enable)",
+        });
+      }
+
+      const headerKey = req.header("x-capture-agent-key") ?? "";
+      // Constant-time compare. Mismatched lengths fail immediately rather
+      // than letting `timingSafeEqual` throw on length mismatch — but we
+      // still pad-compare to avoid leaking the expected length via timing.
+      const headerBuf = Buffer.from(headerKey);
+      const expectedBuf = Buffer.from(expectedKey);
+      const lengthsMatch = headerBuf.length === expectedBuf.length;
+      const equal =
+        lengthsMatch && timingSafeEqual(headerBuf, expectedBuf);
+      if (!equal) {
+        return res.status(401).json({ message: "Invalid capture-agent key" });
+      }
+
+      const { deviceId } = req.params;
+      if (!isValidCameraId(deviceId)) {
+        return res.status(400).json({ message: "Invalid deviceId" });
+      }
+
+      const body = req.body;
+      if (!Buffer.isBuffer(body)) {
+        return res.status(415).json({
+          message: "Expected image/jpeg request body",
+        });
+      }
+
+      const result = frameStore.put(deviceId, body);
+      if (!result.ok) {
+        if (result.reason === "too-large") {
+          return res.status(413).json({
+            message: "Frame too large",
+            bytes: result.bytes,
+            limit: result.limit,
+          });
+        }
+        return res.status(400).json({ message: "Empty frame" });
+      }
+
+      return res.status(204).end();
+    },
+  );
+
+  app.get("/api/internal/devices/:deviceId/frame", (req, res) => {
+    const { deviceId } = req.params;
+    if (!isValidCameraId(deviceId)) {
+      return res.status(400).json({ message: "Invalid deviceId" });
+    }
+    const frame = getEseeCloudAdapter().getFrame(deviceId);
+    if (!frame) {
+      return res.status(404).json({ message: "No fresh frame for device" });
+    }
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Content-Length", String(frame.jpeg.length));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Captured-At", String(frame.capturedAt));
+    res.setHeader("X-Frame-Sequence", String(frame.sequence));
+    return res.end(frame.jpeg);
+  });
+
+  app.get("/api/internal/devices", (_req, res) => {
+    res.json({ devices: frameStore.list() });
   });
 
   // Demo motion simulator. Disabled by default — only runs when DEMO_MODE=true,

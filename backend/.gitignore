@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+guarddog.db
+*.sqlite
+*.sqlite3
+.env
+.env.local

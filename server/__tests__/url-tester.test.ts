@@ -3,6 +3,7 @@ import {
   bandwidthAdvice,
   cleanupFfprobeError,
   injectCredentials,
+  redactUrl,
 } from "../services/url-tester";
 
 describe("url-tester helpers", () => {
@@ -59,6 +60,33 @@ describe("url-tester helpers", () => {
       const cleaned = cleanupFfprobeError(noisy);
       expect(cleaned).toContain("Connection refused");
       expect(cleaned).not.toContain("ffprobe version");
+    });
+  });
+
+  describe("redactUrl", () => {
+    it("strips embedded credentials from rtsp URLs", () => {
+      expect(redactUrl("rtsp://user:secret@10.0.0.1:554/stream")).toBe(
+        "rtsp://10.0.0.1:554/stream",
+      );
+    });
+
+    it("strips embedded credentials from http URLs", () => {
+      expect(redactUrl("http://admin:p%40ss@cam.lan/snapshot.jpg?chn=0")).toBe(
+        "http://cam.lan/snapshot.jpg?chn=0",
+      );
+    });
+
+    it("returns credential-less URLs unchanged", () => {
+      expect(redactUrl("rtsp://10.0.0.1/stream")).toBe("rtsp://10.0.0.1/stream");
+    });
+
+    it("falls back to a regex mask when the URL cannot be parsed", () => {
+      expect(redactUrl("rtsp://user:pass@bad host/stream")).toBe("rtsp://***@bad host/stream");
+    });
+
+    it("returns empty string for non-string input", () => {
+      expect(redactUrl(undefined as unknown as string)).toBe("");
+      expect(redactUrl("")).toBe("");
     });
   });
 });

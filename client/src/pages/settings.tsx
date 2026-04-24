@@ -3,7 +3,7 @@ import Sidebar from '@/components/sidebar';
 import Header from '@/components/header';
 import CameraSettingsModal from '@/components/camera-settings-modal';
 import AccountLoginModal from '@/components/account-login-modal';
-import { NotificationsPanel, AuditLogPanel } from '@/components/notifications-panel';
+import { NotificationsPanel, AuditLogPanel, AlertPipelinePanel, SupervisorStatusPanel } from '@/components/notifications-panel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -167,6 +167,8 @@ export default function Settings() {
             </div>
 
             <NotificationsPanel />
+            <AlertPipelinePanel />
+            <SupervisorStatusPanel />
             <AuditLogPanel />
           </div>
         </main>

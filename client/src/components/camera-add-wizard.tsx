@@ -101,6 +101,9 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
   const [discovered, setDiscovered] = useState<DiscoveredDevice[]>([]);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [snapshotting, setSnapshotting] = useState(false);
   const [state, setState] = useState<WizardState>({
     presetId: "generic-onvif",
     name: "",
@@ -155,6 +158,10 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
     setDiscovered([]);
     setTestResult(null);
     setTesting(false);
+    if (snapshotUrl) URL.revokeObjectURL(snapshotUrl);
+    setSnapshotUrl(null);
+    setSnapshotError(null);
+    setSnapshotting(false);
     setState({
       presetId: "generic-onvif",
       name: "",
@@ -174,6 +181,14 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
     onClose();
     reset();
   };
+
+  // Revoke any pending object URL when the wizard unmounts so we don't leak
+  // the snapshot blob.
+  useEffect(() => {
+    return () => {
+      if (snapshotUrl) URL.revokeObjectURL(snapshotUrl);
+    };
+  }, [snapshotUrl]);
 
   const runDiscovery = async () => {
     setDiscovering(true);
@@ -202,6 +217,9 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
   const runTest = async () => {
     setTesting(true);
     setTestResult(null);
+    if (snapshotUrl) URL.revokeObjectURL(snapshotUrl);
+    setSnapshotUrl(null);
+    setSnapshotError(null);
     try {
       const res = await fetch("/api/cameras/test-url", {
         method: "POST",
@@ -214,10 +232,43 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
       });
       const json: TestResult = await res.json();
       setTestResult(json);
+      if (json.ok) {
+        // Fire-and-forget: a successful probe means the codec parses, but a
+        // visual snapshot is what proves the operator is pointed at the right
+        // camera. Failures here are non-fatal — the wizard can still save.
+        runSnapshot();
+      }
     } catch (err) {
       setTestResult({ ok: false, error: (err as Error).message });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const runSnapshot = async () => {
+    setSnapshotting(true);
+    setSnapshotError(null);
+    try {
+      const res = await fetch("/api/cameras/snapshot-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: state.streamUrl,
+          username: state.username,
+          password: state.password,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ message: "Snapshot failed" }));
+        setSnapshotError(body.message || `HTTP ${res.status}`);
+        return;
+      }
+      const blob = await res.blob();
+      setSnapshotUrl(URL.createObjectURL(blob));
+    } catch (err) {
+      setSnapshotError((err as Error).message);
+    } finally {
+      setSnapshotting(false);
     }
   };
 
@@ -505,6 +556,29 @@ export default function CameraAddWizard({ isOpen, onClose }: CameraAddWizardProp
                   </div>
                 </AlertDescription>
               </Alert>
+            )}
+            {testResult?.ok && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Live preview</div>
+                {snapshotting && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Grabbing a frame…
+                  </div>
+                )}
+                {snapshotUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={snapshotUrl}
+                    alt="Live snapshot from the camera"
+                    className="rounded border max-h-64 object-contain bg-black"
+                  />
+                )}
+                {snapshotError && !snapshotting && (
+                  <div className="text-xs text-amber-700 dark:text-amber-400">
+                    Snapshot unavailable: {snapshotError}. The stream still tested OK; you can save the camera.
+                  </div>
+                )}
+              </div>
             )}
             {testResult && !testResult.ok && (
               <Alert variant="destructive">

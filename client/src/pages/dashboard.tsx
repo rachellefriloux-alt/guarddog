@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWebSocket } from '@/hooks/use-websocket';
 import Sidebar from '@/components/sidebar';
 import Header from '@/components/header';
@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [realtimeStats, setRealtimeStats] = useState<SystemStats | null>(null);
 
   const { lastMessage } = useWebSocket();
+  const queryClient = useQueryClient();
 
   const { data: cameras = [] } = useQuery<Camera[]>({
     queryKey: ['/api/cameras'],
@@ -45,11 +46,14 @@ export default function Dashboard() {
         case 'camera_added':
         case 'camera_updated':
         case 'camera_deleted':
-          // Invalidate cameras query to refetch
+        case 'vendor_cameras_synced':
+          // Refetch the unified camera list so newly imported Ring / eSee
+          // cameras appear in the tile grid without a manual reload.
+          queryClient.invalidateQueries({ queryKey: ['/api/cameras'] });
           break;
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, queryClient]);
 
   const displayDetections = realtimeDetections.length > 0 ? realtimeDetections : detections;
   const displayStats = realtimeStats || stats;
