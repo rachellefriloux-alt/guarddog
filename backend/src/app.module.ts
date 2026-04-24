@@ -12,6 +12,7 @@ import { ClipsModule } from './modules/clips/clips.module';
 import { SnapshotsModule } from './modules/snapshots/snapshots.module';
 import { StreamsModule } from './modules/streams/streams.module';
 import { StreamSupervisorModule } from './modules/stream-supervisor/stream-supervisor.module';
+import { PushModule } from './modules/push/push.module';
 
 import { EseecloudModule } from './adapters/eseecloud/eseecloud.module';
 import { RingModule } from './adapters/ring/ring.module';
@@ -32,6 +33,7 @@ import { AlertsGateway } from './ws/alerts.gateway';
     SnapshotsModule,
     StreamsModule,
     StreamSupervisorModule,
+    PushModule,
     EseecloudModule,
     RingModule,
     InternalModule,
