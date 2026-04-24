@@ -1,0 +1,9 @@
+numpy
+opencv-python
+pillow
+requests
+flask
+pywinauto
+sounddevice
+ffmpeg-python
+pywin32
