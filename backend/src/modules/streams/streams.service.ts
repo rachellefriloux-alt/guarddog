@@ -67,13 +67,15 @@ export class StreamsService implements OnModuleDestroy {
   }
 
   start(cameraId: string, inputUrl: string | null): string {
-    // Validate the cameraId immediately and build the on-disk path right after
-    // — no intermediate property reads in between — so CodeQL's
-    // js/path-injection flow recognizes the regex as a sanitizer in scope.
+    // Validate the cameraId immediately and use it for the on-disk path before
+    // any other property reads — so CodeQL's js/path-injection sanitizer
+    // recognition stays in scope through both the `join` and `mkdirSync`.
     if (!StreamsService.SAFE_ID.test(cameraId)) {
       throw new Error('Invalid cameraId');
     }
     const outDir = join(process.cwd(), 'hls', cameraId);
+    mkdirSync(outDir, { recursive: true });
+    const playlistPath = join(outDir, 'index.m3u8');
 
     // Allow callers (e.g. the supervisor) to restart with the previously known
     // URL by passing null. Throws if there is no cached URL to fall back to.
@@ -86,8 +88,6 @@ export class StreamsService implements OnModuleDestroy {
       return this.getPublicUrl(cameraId);
     }
 
-    mkdirSync(outDir, { recursive: true });
-
     const args = [
       '-i', resolvedUrl,
       '-c:v', 'libx264',
@@ -97,7 +97,7 @@ export class StreamsService implements OnModuleDestroy {
       '-hls_time', '2',
       '-hls_list_size', '3',
       '-hls_flags', 'delete_segments',
-      `${outDir}/index.m3u8`,
+      playlistPath,
     ];
 
     this.log.log(`Starting HLS stream for ${cameraId}: ffmpeg ${args.join(' ')}`);
