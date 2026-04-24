@@ -19,6 +19,27 @@ if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic);
 }
 
+/**
+ * Strip any embedded `user:pass@` credentials from a URL so the result is
+ * safe to log or echo back to clients. Scheme-agnostic — works on `rtsp://`,
+ * `http://`, `https://`, etc. Falls back to a regex when the URL fails to
+ * parse so we never leak by accident.
+ */
+export function redactUrl(url: string): string {
+  if (typeof url !== "string" || url.length === 0) return "";
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) {
+      u.username = "";
+      u.password = "";
+      return u.toString();
+    }
+    return url;
+  } catch {
+    return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)([^/@\s]+)@/i, "$1***@");
+  }
+}
+
 export interface TestUrlInput {
   url: string;
   username?: string;
@@ -153,6 +174,106 @@ export function testUrl(input: TestUrlInput): Promise<TestUrlResult> {
         url: input.url,
         error: (err as Error).message,
       });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot
+// ---------------------------------------------------------------------------
+
+export interface SnapshotResult {
+  ok: boolean;
+  /** JPEG bytes when ok=true. */
+  image?: Buffer;
+  /** Human-friendly error message when ok=false. */
+  error?: string;
+}
+
+/**
+ * Grab a single JPEG frame from an RTSP/HTTP stream. Used by the onboarding
+ * wizard to confirm visually that the operator is pointed at the right
+ * camera before saving — `testUrl` only proves the codec parses, a snapshot
+ * proves the *picture* is right.
+ *
+ * Always resolves (never throws) so route handlers can return a clean JSON
+ * error to the client. Bounded by a fixed timeout so a hostile or slow
+ * camera can't tie up the server. Image bytes are capped at 8 MiB; anything
+ * larger is rejected — a 1080p MJPEG keyframe is well under 1 MiB so the
+ * cap only trips on pathological inputs.
+ */
+export function snapshotFromUrl(input: TestUrlInput): Promise<SnapshotResult> {
+  const probeUrl = injectCredentials(input.url, input.username, input.password);
+  const timeoutMs = 10_000;
+  const maxBytes = 8 * 1024 * 1024;
+
+  return new Promise<SnapshotResult>((resolve) => {
+    let settled = false;
+    const finish = (r: SnapshotResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(r);
+    };
+
+    let command: ReturnType<typeof ffmpeg> | null = null;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let overflow = false;
+
+    const timer = setTimeout(() => {
+      try {
+        command?.kill("SIGKILL");
+      } catch {
+        /* best-effort */
+      }
+      finish({
+        ok: false,
+        error: `Timed out after ${timeoutMs} ms — couldn't grab a frame from the camera.`,
+      });
+    }, timeoutMs);
+
+    try {
+      command = ffmpeg(probeUrl)
+        .inputOptions(["-rtsp_transport", "tcp"])
+        .outputOptions(["-frames:v", "1", "-f", "image2", "-vcodec", "mjpeg"])
+        .on("error", (err) => {
+          clearTimeout(timer);
+          finish({ ok: false, error: cleanupFfprobeError(err.message || String(err)) });
+        });
+
+      const stream = command.pipe();
+      stream.on("data", (chunk: Buffer) => {
+        if (overflow) return;
+        total += chunk.length;
+        if (total > maxBytes) {
+          overflow = true;
+          try {
+            command?.kill("SIGKILL");
+          } catch {
+            /* best-effort */
+          }
+          clearTimeout(timer);
+          finish({ ok: false, error: "Snapshot exceeded 8 MiB cap." });
+          return;
+        }
+        chunks.push(chunk);
+      });
+      stream.on("end", () => {
+        if (overflow) return;
+        clearTimeout(timer);
+        if (chunks.length === 0) {
+          finish({ ok: false, error: "ffmpeg produced no frame." });
+          return;
+        }
+        finish({ ok: true, image: Buffer.concat(chunks) });
+      });
+      stream.on("error", (err: Error) => {
+        clearTimeout(timer);
+        finish({ ok: false, error: cleanupFfprobeError(err.message || String(err)) });
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      finish({ ok: false, error: (err as Error).message });
     }
   });
 }

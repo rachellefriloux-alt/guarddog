@@ -20,7 +20,7 @@ import { localOcrService } from "./services/local-ocr-service";
 import { getAlertPipeline } from "./services/alert-pipeline";
 import { getCameraSupervisor } from "./adapters/supervisor-bootstrap";
 import { sessionMiddleware } from "./session";
-import { testUrl } from "./services/url-tester";
+import { testUrl, snapshotFromUrl, redactUrl } from "./services/url-tester";
 import { discoverOnvifDevices } from "./services/onvif-discovery";
 import { cameraPresets } from "./services/camera-presets";
 import { sovereignRecorder } from "./services/sovereign-recorder";
@@ -378,13 +378,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Body must include a 'url' string." });
       }
       const result = await testUrl({ url, username, password });
+      const safeUrl = redactUrl(url);
       auditLog.record({
         event: "camera.test_url",
-        detail: `${url} → ${result.ok ? "ok" : `error: ${result.error ?? "unknown"}`}`,
+        detail: `${safeUrl} → ${result.ok ? "ok" : `error: ${result.error ?? "unknown"}`}`,
         user: req.session?.user?.email,
         ip: req.ip,
       });
       res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: (err as Error).message });
+    }
+  });
+
+  // Grab a single JPEG frame from an RTSP/HTTP URL so the onboarding wizard
+  // can show the operator a live picture before saving the camera. Returns
+  // either `image/jpeg` bytes (200) or `{ message }` JSON (4xx/5xx). Bounded
+  // and credential-injected the same way as `/test-url`; the audit-log entry
+  // intentionally omits credentials.
+  app.post("/api/cameras/snapshot-url", async (req, res) => {
+    try {
+      const { url, username, password } = req.body || {};
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ message: "Body must include a 'url' string." });
+      }
+      const result = await snapshotFromUrl({ url, username, password });
+      const safeUrl = redactUrl(url);
+      auditLog.record({
+        event: "camera.snapshot_url",
+        detail: `${safeUrl} → ${result.ok ? `ok (${result.image?.length ?? 0} bytes)` : `error: ${result.error ?? "unknown"}`}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      if (!result.ok || !result.image) {
+        return res.status(502).json({ message: result.error ?? "Snapshot failed." });
+      }
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(result.image);
     } catch (err) {
       res.status(500).json({ message: (err as Error).message });
     }
