@@ -481,7 +481,7 @@ export default function AccountLoginModal({ isOpen, onClose }: AccountLoginModal
                   <div className="space-y-3">
                     <p className="text-sm text-success">✓ Ring account is connected{ringAccountEmail ? ` (${ringAccountEmail})` : ''}</p>
                     <p className="text-xs text-muted-foreground">
-                      Importing pulls every Ring camera into the GuardDog dashboard so you can view the live feeds here instead of in the Ring app. Live streams require the Ring-MQTT bridge — set <code>RING_RTSP_BASE_URL</code> if it doesn't run on this host.
+                      Importing pulls every Ring camera into the GuardDog dashboard so you can view the live feeds here instead of in the Ring app. Live streaming runs in-process via Ring's official API — no extra bridge process required.
                     </p>
                     <div className="flex gap-2">
                       <Button

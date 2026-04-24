@@ -706,6 +706,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Ring HLS streaming — served from per-device dirs created by
+  // `RingDirectStreamer`. `deviceId` and `filename` are both whitelisted
+  // AND we verify the resolved path is still inside the recordings root,
+  // so a hostile client can't escape with `../` segments or NUL bytes.
+  app.get("/api/stream/ring/:deviceId/:filename", async (req, res) => {
+    const { deviceId, filename } = req.params;
+    if (!/^[A-Za-z0-9_]{1,64}$/.test(deviceId)) {
+      return res.status(400).json({ message: "Invalid deviceId" });
+    }
+    if (filename !== "playlist.m3u8" && !/^segment_[0-9]{5}\.ts$/.test(filename)) {
+      return res.status(400).json({ message: "Invalid filename" });
+    }
+    // Belt-and-braces: even though both inputs are regex-whitelisted,
+    // strip any directory components and require the resolved path stays
+    // under the recordings root.
+    const safeFilename = path.basename(filename);
+    const safeDeviceId = path.basename(deviceId);
+    const recordingsRoot = path.resolve(process.cwd(), "recordings");
+    const filePath = path.resolve(recordingsRoot, `ring_${safeDeviceId}`, safeFilename);
+    if (!filePath.startsWith(recordingsRoot + path.sep)) {
+      return res.status(400).json({ message: "Invalid path" });
+    }
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: "Stream file not found" });
+    }
+    if (safeFilename.endsWith(".m3u8")) {
+      res.set("Content-Type", "application/vnd.apple.mpegurl");
+      res.set("Cache-Control", "no-cache");
+    } else {
+      res.set("Content-Type", "video/mp2t");
+    }
+    res.sendFile(filePath);
+  });
+
+  // Start the in-process Ring -> HLS pipeline for a device. Returns the
+  // playlist URL the client should hand to its HLS player. Idempotent —
+  // re-calling for an already-streaming device returns the existing URL
+  // instead of opening a second WebRTC session against Ring.
+  app.post("/api/ring/devices/:deviceId/start-stream", async (req, res) => {
+    try {
+      const hlsUrl = await ringAuthService.startLiveStream(req.params.deviceId);
+      if (!hlsUrl) return res.status(502).json({ message: "Failed to start Ring live stream" });
+      auditLog.record({
+        event: "ring.live_start",
+        detail: req.params.deviceId,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.json({ hlsUrl });
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
+    }
+  });
+
+  app.post("/api/ring/devices/:deviceId/stop-stream", async (req, res) => {
+    try {
+      await ringAuthService.stopLiveStream(req.params.deviceId);
+      auditLog.record({
+        event: "ring.live_stop",
+        detail: req.params.deviceId,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
+    }
+  });
+
   // Recording control routes
   app.post("/api/cameras/:id/start-recording", async (req, res) => {
     try {
