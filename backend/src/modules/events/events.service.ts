@@ -38,7 +38,9 @@ export class EventsService {
         timestamp: saved.timestamp.toISOString(),
         thumbnailUrl: saved.metadata?.thumbnailUrl,
       })
-      .catch((err: Error) => this.logger.warn(`push notify failed: ${err.message}`));
+      .catch((err: Error) =>
+        this.logger.warn(`push notify failed for event ${saved.id}: ${err.message}`),
+      );
     return saved;
   }
 

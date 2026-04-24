@@ -38,8 +38,9 @@ const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
 // Expo's published token formats. Both the legacy ExponentPushToken[...]
 // and the newer ExpoPushToken[...] forms are accepted; anything else is
-// rejected to prevent spoofing the registry with arbitrary strings.
-const TOKEN_RE = /^Exp(?:onent)?PushToken\[[A-Za-z0-9_-]+\]$/;
+// rejected to prevent spoofing the registry with arbitrary strings. The
+// length is bounded to avoid pathological inputs.
+const TOKEN_RE = /^Exp(?:onent)?PushToken\[[A-Za-z0-9_-]{1,200}\]$/;
 
 export function isValidExpoPushToken(token: unknown): token is string {
   return typeof token === 'string' && TOKEN_RE.test(token);

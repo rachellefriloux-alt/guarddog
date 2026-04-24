@@ -70,7 +70,7 @@ export async function registerPushToken(serverUrl: string) {
     const token = await getOrRequestPushToken();
     if (!token) return null;
 
-    const fingerprint = serverUrl + '|' + token;
+    const fingerprint = JSON.stringify({ serverUrl, token });
     const prev = await SecureStore.getItemAsync(REGISTERED_KEY);
     if (prev === fingerprint) return token;
 
