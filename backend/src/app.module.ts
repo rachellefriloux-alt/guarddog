@@ -10,6 +10,7 @@ import { DevicesModule } from './modules/devices/devices.module';
 import { EventsModule } from './modules/events/events.module';
 import { ClipsModule } from './modules/clips/clips.module';
 import { SnapshotsModule } from './modules/snapshots/snapshots.module';
+import { StreamsModule } from './modules/streams/streams.module';
 
 import { EseecloudModule } from './adapters/eseecloud/eseecloud.module';
 import { RingModule } from './adapters/ring/ring.module';
@@ -28,6 +29,7 @@ import { AlertsGateway } from './ws/alerts.gateway';
     EventsModule,
     ClipsModule,
     SnapshotsModule,
+    StreamsModule,
     EseecloudModule,
     RingModule,
     InternalModule,
