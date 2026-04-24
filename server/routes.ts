@@ -1,4 +1,6 @@
 import type { Express } from "express";
+import express from "express";
+import { timingSafeEqual } from "crypto";
 import { createServer, type Server, type IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
@@ -27,6 +29,8 @@ import { cameraPresets } from "./services/camera-presets";
 import { sovereignRecorder } from "./services/sovereign-recorder";
 import { runDiagnostics } from "./services/diagnostics";
 import { auditLog } from "./services/audit-log";
+import { getFrameStore, isValidCameraId } from "./services/frame-store";
+import { getEseeCloudAdapter } from "./adapters/eseecloud/eseecloud.adapter";
 import { notificationService } from "./services/notification-service";
 import { mintShareToken, verifyShareToken } from "./services/clip-share";
 import { parseSmartRule, ruleMatches, type SmartRule } from "./services/smart-filter";
@@ -231,6 +235,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Public share links — the signed token IS the auth.
     if (req.path.startsWith("/api/share/")) {
+      return next();
+    }
+
+    // Capture-agent ingest (EseeCloud adapter pushing window-region frames):
+    // POST /api/internal/devices/:id/frame is authenticated by a shared
+    // secret in the `x-capture-agent-key` header inside the route handler,
+    // not by user session. See ARCHITECTURE.md "INTERNAL API".
+    if (
+      req.method === "POST" &&
+      /^\/api\/internal\/devices\/[A-Za-z0-9_.-]{1,64}\/frame\/?$/.test(req.path)
+    ) {
       return next();
     }
 
@@ -1392,6 +1407,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ message: "Failed to get recognition events" });
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Internal device frame buffer  —  ARCHITECTURE.md "INTERNAL API" + Phase 2
+  // ---------------------------------------------------------------------------
+  // The C90 cameras are P2P-only and not directly reachable from this process.
+  // A small capture agent running alongside the official EseeCloud desktop app
+  // on the mini-PC grabs window-region JPEGs and POSTs them to the ingest
+  // endpoint below. The AI service (Sallie) and debug clients then pull the
+  // latest frame back via the GET endpoint. Everything goes through the
+  // `EseeCloudAdapter` interface so Phase 5's real-screen-capture
+  // implementation can drop-in replace this stub.
+  const frameStore = getFrameStore();
+  const frameRawParser = express.raw({
+    type: ["image/jpeg", "image/jpg"],
+    limit: frameStore.maxBytes,
+  });
+
+  app.post(
+    "/api/internal/devices/:deviceId/frame",
+    frameRawParser,
+    (req, res) => {
+      const expectedKey = process.env.ESEE_CAPTURE_AGENT_KEY;
+      if (!expectedKey) {
+        return res.status(503).json({
+          message:
+            "Capture-agent ingest disabled (set ESEE_CAPTURE_AGENT_KEY to enable)",
+        });
+      }
+
+      const headerKey = req.header("x-capture-agent-key") ?? "";
+      // Constant-time compare. Mismatched lengths fail immediately rather
+      // than letting `timingSafeEqual` throw on length mismatch — but we
+      // still pad-compare to avoid leaking the expected length via timing.
+      const headerBuf = Buffer.from(headerKey);
+      const expectedBuf = Buffer.from(expectedKey);
+      const lengthsMatch = headerBuf.length === expectedBuf.length;
+      const equal =
+        lengthsMatch && timingSafeEqual(headerBuf, expectedBuf);
+      if (!equal) {
+        return res.status(401).json({ message: "Invalid capture-agent key" });
+      }
+
+      const { deviceId } = req.params;
+      if (!isValidCameraId(deviceId)) {
+        return res.status(400).json({ message: "Invalid deviceId" });
+      }
+
+      const body = req.body;
+      if (!Buffer.isBuffer(body)) {
+        return res.status(415).json({
+          message: "Expected image/jpeg request body",
+        });
+      }
+
+      const result = frameStore.put(deviceId, body);
+      if (!result.ok) {
+        if (result.reason === "too-large") {
+          return res.status(413).json({
+            message: "Frame too large",
+            bytes: result.bytes,
+            limit: result.limit,
+          });
+        }
+        return res.status(400).json({ message: "Empty frame" });
+      }
+
+      return res.status(204).end();
+    },
+  );
+
+  app.get("/api/internal/devices/:deviceId/frame", (req, res) => {
+    const { deviceId } = req.params;
+    if (!isValidCameraId(deviceId)) {
+      return res.status(400).json({ message: "Invalid deviceId" });
+    }
+    const frame = getEseeCloudAdapter().getFrame(deviceId);
+    if (!frame) {
+      return res.status(404).json({ message: "No fresh frame for device" });
+    }
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Content-Length", String(frame.jpeg.length));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Captured-At", String(frame.capturedAt));
+    res.setHeader("X-Frame-Sequence", String(frame.sequence));
+    return res.end(frame.jpeg);
+  });
+
+  app.get("/api/internal/devices", (_req, res) => {
+    res.json({ devices: frameStore.list() });
   });
 
   // Demo motion simulator. Disabled by default — only runs when DEMO_MODE=true,
