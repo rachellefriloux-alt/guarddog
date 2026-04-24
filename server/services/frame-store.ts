@@ -84,7 +84,15 @@ export class FrameStore {
    * the store needing to know about HTTP.
    */
   put(cameraId: string, jpeg: Buffer): FramePutResult {
-    if (!jpeg || jpeg.length === 0) {
+    // Defense-in-depth: although TypeScript declares `jpeg` as `Buffer`,
+    // an HTTP request parameter could be an array (or string) at runtime
+    // if a future caller forgets to validate before passing through.
+    // Reject anything that is not a Node `Buffer` so length/byte checks
+    // below have the semantics we expect.
+    if (!Buffer.isBuffer(jpeg)) {
+      return { ok: false, reason: "empty" };
+    }
+    if (jpeg.length === 0) {
       return { ok: false, reason: "empty" };
     }
     if (jpeg.length > this.maxFrameBytes) {
