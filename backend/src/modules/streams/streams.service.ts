@@ -11,9 +11,47 @@ export class StreamsService implements OnModuleDestroy {
   // Using a plain object to avoid generics which break transport
   private processes: { [cameraId: string]: any } = {};
 
+  // Remember the source URL each stream was started with so the supervisor
+  // (or any caller) can restart with the same input. Cleared on stop/exit.
+  private inputUrls: { [cameraId: string]: string } = {};
+
   // Restrict cameraId to a safe character set so it cannot escape the hls/ root
   // (e.g. via path traversal segments like ".." or absolute paths).
   private static readonly SAFE_ID = /^[A-Za-z0-9_-]+$/;
+
+  static isSafeId(cameraId: string): boolean {
+    return StreamsService.SAFE_ID.test(cameraId);
+  }
+
+  /** Returns the original input URL for a running stream, or undefined. */
+  getInputUrl(cameraId: string): string | undefined {
+    return this.inputUrls[cameraId];
+  }
+
+  /** Returns the running ffmpeg child process for a camera, or undefined. */
+  getProcess(cameraId: string): any | undefined {
+    return this.processes[cameraId];
+  }
+
+  /** Resolved on-disk directory for the camera's HLS output. */
+  getHlsDir(cameraId: string): string {
+    if (!StreamsService.SAFE_ID.test(cameraId)) {
+      throw new Error('Invalid cameraId');
+    }
+    return join(process.cwd(), 'hls', cameraId);
+  }
+
+  /**
+   * Stop and immediately restart a stream using the input URL it was originally
+   * started with. Returns the public HLS URL, or undefined if the camera is not
+   * currently tracked (no known input URL to restart from).
+   */
+  restart(cameraId: string): string | undefined {
+    const url = this.inputUrls[cameraId];
+    if (!url) return undefined;
+    this.stop(cameraId);
+    return this.start(cameraId, url);
+  }
 
   private getHlsPath(cameraId: string): string {
     if (!StreamsService.SAFE_ID.test(cameraId)) {
@@ -28,11 +66,18 @@ export class StreamsService implements OnModuleDestroy {
     return `/hls/${cameraId}/index.m3u8`;
   }
 
-  start(cameraId: string, inputUrl: string): string {
+  start(cameraId: string, inputUrl: string | null): string {
     // Inline validation: CodeQL's js/path-injection sanitizer recognition
     // works best when the regex test sits in the same scope as the path use.
     if (!StreamsService.SAFE_ID.test(cameraId)) {
       throw new Error('Invalid cameraId');
+    }
+
+    // Allow callers (e.g. the supervisor) to restart with the previously known
+    // URL by passing null. Throws if there is no cached URL to fall back to.
+    const resolvedUrl = inputUrl ?? this.inputUrls[cameraId];
+    if (!resolvedUrl) {
+      throw new Error(`No inputUrl provided or cached for ${cameraId}`);
     }
 
     if (this.processes[cameraId]) {
@@ -43,7 +88,7 @@ export class StreamsService implements OnModuleDestroy {
     mkdirSync(outDir, { recursive: true });
 
     const args = [
-      '-i', inputUrl,
+      '-i', resolvedUrl,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-tune', 'zerolatency',
@@ -58,6 +103,7 @@ export class StreamsService implements OnModuleDestroy {
 
     const proc = spawn('ffmpeg', args);
     this.processes[cameraId] = proc;
+    this.inputUrls[cameraId] = resolvedUrl;
 
     proc.stderr.on('data', (d: Buffer) => {
       this.log.debug(`[${cameraId}] ${d.toString()}`);
@@ -66,6 +112,7 @@ export class StreamsService implements OnModuleDestroy {
     proc.on('exit', (code: number) => {
       this.log.warn(`Stream for ${cameraId} exited with code ${code}`);
       delete this.processes[cameraId];
+      // Keep this.inputUrls[cameraId] so a supervisor restart can reuse it.
     });
 
     return this.getPublicUrl(cameraId);
@@ -77,6 +124,7 @@ export class StreamsService implements OnModuleDestroy {
       this.log.warn(`Stopping stream for ${cameraId}`);
       proc.kill('SIGTERM');
       delete this.processes[cameraId];
+      // Keep this.inputUrls[cameraId] so a supervisor restart can reuse it.
     }
   }
 
