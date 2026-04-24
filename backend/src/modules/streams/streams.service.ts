@@ -1,6 +1,6 @@
 // backend/src/modules/streams/streams.service.ts
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn } from 'child_process';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
@@ -8,21 +8,17 @@ import { existsSync, mkdirSync } from 'fs';
 export class StreamsService implements OnModuleDestroy {
   private readonly log = new Logger(StreamsService.name);
 
-  // Use a plain object map to avoid generic syntax issues in transport
-  private processes: { [cameraId: string]: ChildProcessWithoutNullStreams } = {};
+  // Using a plain object to avoid generics which break transport
+  private processes: { [cameraId: string]: any } = {};
 
   // Restrict cameraId to a safe character set so it cannot escape the hls/ root
   // (e.g. via path traversal segments like ".." or absolute paths).
   private static readonly SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
-  private assertSafeId(cameraId: string): void {
-    if (!StreamsService.SAFE_ID.test(cameraId)) {
-      throw new Error(`Invalid cameraId: ${cameraId}`);
-    }
-  }
-
   private getHlsPath(cameraId: string): string {
-    this.assertSafeId(cameraId);
+    if (!StreamsService.SAFE_ID.test(cameraId)) {
+      throw new Error('Invalid cameraId');
+    }
     const dir = join(process.cwd(), 'hls', cameraId);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     return join(dir, 'index.m3u8');
@@ -33,7 +29,12 @@ export class StreamsService implements OnModuleDestroy {
   }
 
   start(cameraId: string, inputUrl: string): string {
-    this.assertSafeId(cameraId);
+    // Inline validation: CodeQL's js/path-injection sanitizer recognition
+    // works best when the regex test sits in the same scope as the path use.
+    if (!StreamsService.SAFE_ID.test(cameraId)) {
+      throw new Error('Invalid cameraId');
+    }
+
     if (this.processes[cameraId]) {
       return this.getPublicUrl(cameraId);
     }
@@ -58,11 +59,11 @@ export class StreamsService implements OnModuleDestroy {
     const proc = spawn('ffmpeg', args);
     this.processes[cameraId] = proc;
 
-    proc.stderr.on('data', (d) => {
+    proc.stderr.on('data', (d: Buffer) => {
       this.log.debug(`[${cameraId}] ${d.toString()}`);
     });
 
-    proc.on('exit', (code) => {
+    proc.on('exit', (code: number) => {
       this.log.warn(`Stream for ${cameraId} exited with code ${code}`);
       delete this.processes[cameraId];
     });
