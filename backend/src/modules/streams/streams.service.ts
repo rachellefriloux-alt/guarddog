@@ -67,11 +67,13 @@ export class StreamsService implements OnModuleDestroy {
   }
 
   start(cameraId: string, inputUrl: string | null): string {
-    // Inline validation: CodeQL's js/path-injection sanitizer recognition
-    // works best when the regex test sits in the same scope as the path use.
+    // Validate the cameraId immediately and build the on-disk path right after
+    // — no intermediate property reads in between — so CodeQL's
+    // js/path-injection flow recognizes the regex as a sanitizer in scope.
     if (!StreamsService.SAFE_ID.test(cameraId)) {
       throw new Error('Invalid cameraId');
     }
+    const outDir = join(process.cwd(), 'hls', cameraId);
 
     // Allow callers (e.g. the supervisor) to restart with the previously known
     // URL by passing null. Throws if there is no cached URL to fall back to.
@@ -84,12 +86,6 @@ export class StreamsService implements OnModuleDestroy {
       return this.getPublicUrl(cameraId);
     }
 
-    // Re-assert the cameraId sanitizer immediately before the path is built so
-    // CodeQL's js/path-injection flow recognizes the guard in the same scope.
-    if (!StreamsService.SAFE_ID.test(cameraId)) {
-      throw new Error('Invalid cameraId');
-    }
-    const outDir = join(process.cwd(), 'hls', cameraId);
     mkdirSync(outDir, { recursive: true });
 
     const args = [
