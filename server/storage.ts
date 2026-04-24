@@ -22,6 +22,15 @@ export interface IStorage {
   getCameras(): Promise<Camera[]>;
   getCamera(id: string): Promise<Camera | undefined>;
   createCamera(camera: InsertCamera): Promise<Camera>;
+  /**
+   * Idempotent upsert keyed by an explicit id. Used by vendor sync (Ring,
+   * eSeeCloud, ...) to mirror externally-managed cameras into the unified
+   * `cameras` collection so they show up alongside generic RTSP cameras in
+   * the dashboard, supervisor, and HLS streaming pipeline. Re-running sync
+   * is safe: existing rows are updated in-place, preserving their `id` and
+   * `createdAt`.
+   */
+  upsertCamera(id: string, camera: InsertCamera): Promise<Camera>;
   updateCamera(id: string, updates: Partial<InsertCamera>): Promise<Camera | undefined>;
   deleteCamera(id: string): Promise<boolean>;
 
@@ -294,6 +303,63 @@ export class MemStorage implements IStorage {
     const updatedCamera = { ...camera, ...updates };
     this.cameras.set(id, updatedCamera);
     return updatedCamera;
+  }
+
+  async upsertCamera(id: string, insertCamera: InsertCamera): Promise<Camera> {
+    const existing = this.cameras.get(id);
+    if (existing) {
+      // Update in-place — `id` and `createdAt` are preserved so re-running
+      // a vendor sync doesn't churn downstream consumers (recordings,
+      // detections) that reference the camera by id.
+      const updated: Camera = {
+        ...existing,
+        type: insertCamera.type,
+        name: insertCamera.name,
+        location: insertCamera.location,
+        ipAddress: insertCamera.ipAddress,
+        port: insertCamera.port ?? existing.port ?? "554",
+        streamUrl: insertCamera.streamUrl,
+        username: insertCamera.username ?? existing.username ?? null,
+        password: insertCamera.password ?? existing.password ?? null,
+        resolution: insertCamera.resolution ?? existing.resolution ?? "1080p",
+        // Booleans intentionally fall back to the existing value — vendor
+        // sync should not silently flip a user's "isRecording" toggle off
+        // just because the vendor API didn't carry that field.
+        isOnline: insertCamera.isOnline ?? existing.isOnline ?? true,
+        wifiStrength: insertCamera.wifiStrength ?? existing.wifiStrength ?? 100,
+        aiDetectionEnabled:
+          insertCamera.aiDetectionEnabled ?? existing.aiDetectionEnabled ?? true,
+        detectPeople: insertCamera.detectPeople ?? existing.detectPeople ?? true,
+        detectPets: insertCamera.detectPets ?? existing.detectPets ?? true,
+        detectVehicles: insertCamera.detectVehicles ?? existing.detectVehicles ?? false,
+        isRecording: insertCamera.isRecording ?? existing.isRecording ?? true,
+      };
+      this.cameras.set(id, updated);
+      return updated;
+    }
+
+    const camera: Camera = {
+      id,
+      type: insertCamera.type,
+      name: insertCamera.name,
+      location: insertCamera.location,
+      ipAddress: insertCamera.ipAddress,
+      port: insertCamera.port ?? "554",
+      streamUrl: insertCamera.streamUrl,
+      username: insertCamera.username ?? null,
+      password: insertCamera.password ?? null,
+      resolution: insertCamera.resolution ?? "1080p",
+      isOnline: insertCamera.isOnline ?? true,
+      wifiStrength: insertCamera.wifiStrength ?? 100,
+      aiDetectionEnabled: insertCamera.aiDetectionEnabled ?? true,
+      detectPeople: insertCamera.detectPeople ?? true,
+      detectPets: insertCamera.detectPets ?? true,
+      detectVehicles: insertCamera.detectVehicles ?? false,
+      isRecording: insertCamera.isRecording ?? true,
+      createdAt: new Date(),
+    };
+    this.cameras.set(id, camera);
+    return camera;
   }
 
   async deleteCamera(id: string): Promise<boolean> {

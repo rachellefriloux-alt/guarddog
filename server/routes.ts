@@ -22,6 +22,7 @@ import { getCameraSupervisor } from "./adapters/supervisor-bootstrap";
 import { sessionMiddleware } from "./session";
 import { testUrl, snapshotFromUrl, redactUrl } from "./services/url-tester";
 import { discoverOnvifDevices } from "./services/onvif-discovery";
+import { syncRingCameras, syncEseeCameras } from "./services/vendor-sync";
 import { cameraPresets } from "./services/camera-presets";
 import { sovereignRecorder } from "./services/sovereign-recorder";
 import { runDiagnostics } from "./services/diagnostics";
@@ -1000,6 +1001,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ message: "Failed to get snapshot" });
+    }
+  });
+
+  // Mirror authenticated Ring devices into the unified `storage.cameras`
+  // collection so they render in the dashboard tile grid and stream through
+  // the same HLS pipeline as generic RTSP cameras. Idempotent — re-running
+  // upserts existing rows by deterministic id (`ring_<deviceId>`). The body
+  // is empty; pass `{ "ringRtspBaseUrl": "rtsp://..." }` to override the
+  // bridge host.
+  app.post("/api/ring/sync", async (req, res) => {
+    try {
+      const ringRtspBaseUrl =
+        typeof req.body?.ringRtspBaseUrl === "string" ? req.body.ringRtspBaseUrl : undefined;
+      const report = await syncRingCameras(ringAuthService, storage, { ringRtspBaseUrl });
+      auditLog.record({
+        event: "camera.vendor_sync",
+        detail: `ring → imported=${report.imported.length} skipped=${report.skipped.length}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      // Tell the dashboard to refresh its `/api/cameras` cache.
+      if (report.imported.length > 0) {
+        broadcast({ type: "vendor_cameras_synced", vendor: "ring", count: report.imported.length });
+      }
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
+    }
+  });
+
+  // Same as /api/ring/sync, but for eSeeCloud cameras.
+  app.post("/api/esee-cameras/sync", async (req, res) => {
+    try {
+      const report = await syncEseeCameras(eseeCloudService, storage);
+      auditLog.record({
+        event: "camera.vendor_sync",
+        detail: `esee → imported=${report.imported.length} skipped=${report.skipped.length}`,
+        user: req.session?.user?.email,
+        ip: req.ip,
+      });
+      if (report.imported.length > 0) {
+        broadcast({ type: "vendor_cameras_synced", vendor: "esee", count: report.imported.length });
+      }
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ message: (error as Error).message });
     }
   });
 
